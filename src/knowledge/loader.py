@@ -10,12 +10,20 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 # 知識源そのものではなく編集手順を書いたファイルなので、プロンプトには含めない
 EXCLUDED_FILENAMES = frozenset({"README.md"})
+
+# HTML コメントは運営向けの記入例・メモなので、Bot には渡さない。
+#
+# ⚠️ ここを外すと、テンプレートの記入例(架空の配点や日付)が
+#    そのままシステムプロンプトに入り、Bot がそれを事実として答えうる。
+#    運営情報は推測厳禁(SPEC §6.3)なので、これは重大な事故になる。
+HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 
 
 def load_knowledge(directory: Path) -> str:
@@ -35,7 +43,7 @@ def load_knowledge(directory: Path) -> str:
 
     sections: list[str] = []
     for path in paths:
-        body = path.read_text(encoding="utf-8").strip()
+        body = HTML_COMMENT_RE.sub("", path.read_text(encoding="utf-8")).strip()
         if not body:
             continue
         sections.append(body)

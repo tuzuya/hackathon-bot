@@ -73,3 +73,39 @@ class ParticipantMessageTest(unittest.TestCase):
         from src import messages
 
         self.assertIn("エンジニア相談室", messages.forum_root_guide("エンジニア相談室"))
+
+
+class KnowledgeCommentTest(unittest.TestCase):
+    """運営向けの記入例が Bot に渡らないこと。
+
+    テンプレートの HTML コメントには架空の配点や日付が入っている。
+    これがプロンプトに混ざると、Bot が推測ではなく「知識源に書いてある」
+    ものとして架空の締切を答えてしまう(SPEC §6.3 に真っ向から反する)。
+    """
+
+    def test_HTMLコメントは知識源に含まれない(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "10_test.md"
+            path.write_text(
+                "# 見出し\n\n<!-- 記入例: 提出期限は10月5日 15:30 -->\n\n本当の内容\n",
+                encoding="utf-8",
+            )
+            knowledge = load_knowledge(Path(tmp))
+            self.assertIn("本当の内容", knowledge)
+            self.assertNotIn("10月5日", knowledge)
+            self.assertNotIn("記入例", knowledge)
+
+    def test_複数行のコメントも除去される(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "10_test.md"
+            path.write_text(
+                "見出し\n<!--\n複数行\nのコメント\n-->\n本文\n", encoding="utf-8"
+            )
+            knowledge = load_knowledge(Path(tmp))
+            self.assertNotIn("複数行", knowledge)
+            self.assertIn("本文", knowledge)
+
+    def test_実際のテンプレートに架空データが残っていない(self) -> None:
+        knowledge = load_knowledge(PROJECT_ROOT / "knowledge")
+        for fake in ("課題設定 | 30点", "記入例"):
+            self.assertNotIn(fake, knowledge, f"架空の例が混入しています: {fake}")
