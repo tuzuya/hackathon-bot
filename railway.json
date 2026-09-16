@@ -1,0 +1,7 @@
+{
+  "deploy": {
+    "startCommand": "python -m src.bot",
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 10
+  }
+}
