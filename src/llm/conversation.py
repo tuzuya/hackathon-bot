@@ -13,6 +13,7 @@ import logging
 import discord
 from anthropic.types import MessageParam
 
+from src import attachments as attachments_module
 from src.discord_utils import strip_mention
 
 logger = logging.getLogger(__name__)
@@ -21,6 +22,10 @@ logger = logging.getLogger(__name__)
 # API は空文字の content を受け付けないため、かつ文脈としても
 # 「何か貼られた」ことは伝えたい。
 EMPTY_CONTENT_PLACEHOLDER = "(添付ファイルのみ)"
+
+# 画像を実際に読み込むのは、直近この件数のメッセージまで。
+# 古い画像まで毎回送るとコストが跳ね上がる(画像1枚で1,500〜3,000トークン)。
+IMAGE_LOOKBACK = 2
 
 # 本文なしで @bot だけを送られたときに、末尾に補う user ターン。
 # Claude API は messages が user で終わることを要求するため、
@@ -33,10 +38,51 @@ def _message_text(message: discord.Message, bot_user_id: int) -> str:
     if text:
         return text
     if message.attachments:
-        # 画像の中身を読むのは段階5で対応する
         names = ", ".join(a.filename for a in message.attachments)
         return f"{EMPTY_CONTENT_PLACEHOLDER}: {names}"
     return ""
+
+
+async def _build_content(
+    message: discord.Message,
+    bot_user_id: int,
+    *,
+    include_images: bool,
+) -> str | list[dict]:
+    """1 メッセージ分の content を組み立てる。
+
+    添付が無ければ文字列、あればブロックの配列を返す。
+    画像は本文より前に置く(そのほうがモデルが文脈を掴みやすい)。
+    """
+    text = _message_text(message, bot_user_id)
+    if not message.attachments:
+        return text
+
+    result = await attachments_module.collect(
+        message.attachments, include_images=include_images
+    )
+    if not result.has_content and not result.notes and not result.omitted:
+        return text
+
+    blocks: list[dict] = list(result.blocks)
+    parts: list[str] = []
+    if text and not text.startswith(EMPTY_CONTENT_PLACEHOLDER):
+        parts.append(text)
+    if result.omitted:
+        # 過去の画像。失敗ではないので、事実だけを中立に伝える
+        parts.append(f"(この発言には画像が添付されていた: {', '.join(result.omitted)})")
+    if result.notes:
+        # 読めなかったことをモデルにも伝え、参加者に案内させる
+        parts.append(
+            "[システム注記: 次の添付は読み込めませんでした — "
+            + " / ".join(result.notes)
+            + "。参加者にそのことを伝えてください]"
+        )
+    if not parts and not blocks:
+        return text
+    if parts:
+        blocks.append({"type": "text", "text": "\n\n".join(parts)})
+    return blocks
 
 
 async def build_messages(
@@ -70,12 +116,26 @@ async def build_messages(
     if thread.name:
         messages.append({"role": "user", "content": f"【この投稿のタイトル】{thread.name}"})
 
+    # 画像を読み込むのは直近のメッセージだけにする(コスト防御)
+    image_ids = {
+        m.id
+        for m in [m for m in collected if m.attachments][-IMAGE_LOOKBACK:]
+    }
+
     for message in collected:
-        text = _message_text(message, bot_user_id)
-        if not text:
-            continue
         role = "assistant" if message.author.id == bot_user_id else "user"
-        messages.append({"role": role, "content": text})
+        if role == "assistant":
+            text = _message_text(message, bot_user_id)
+            if text:
+                messages.append({"role": role, "content": text})
+            continue
+
+        content = await _build_content(
+            message, bot_user_id, include_images=message.id in image_ids
+        )
+        if not content:
+            continue
+        messages.append({"role": role, "content": content})  # type: ignore[typeddict-item]
 
     # API は user で始まり、user で終わる必要がある。
 

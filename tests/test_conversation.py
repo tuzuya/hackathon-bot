@@ -86,14 +86,17 @@ class BuildMessagesTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_添付のみのメッセージも空にならない(self) -> None:
         message = _msg(1, "<@42>", message_id=THREAD_ID)
-        attachment = MagicMock()
+        attachment = MagicMock(spec=discord.Attachment)
         attachment.filename = "error.png"
+        attachment.content_type = "application/octet-stream"  # 非対応形式
+        attachment.size = 1024
         message.attachments = [attachment]
         thread = _thread([message])
         result = await build_messages(thread, BOT_ID, limit=20)
-        self.assertIn("error.png", result[-1]["content"])
+        rendered = str(result[-1]["content"])
+        self.assertIn("error.png", rendered)
         for entry in result:
-            self.assertTrue(entry["content"].strip(), "空の content は API に拒否される")
+            self.assertTrue(str(entry["content"]).strip(), "空の content は API に拒否される")
 
 
 if __name__ == "__main__":

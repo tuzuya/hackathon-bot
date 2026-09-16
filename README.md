@@ -11,7 +11,7 @@
 | 2 | LLM 接続・文脈保持 | ✅ 実装済み |
 | 3 | 知識源の投入 | ⚠️ 仕組みは実装済み。運営情報(A〜D)が未記入 |
 | 4 | エスカレーション | ✅ 実装済み(実機確認まち) |
-| 5 | 添付ファイル対応 | 未着手 |
+| 5 | 添付ファイル対応 | ✅ 実装済み(実機確認まち) |
 | 6 | 動的追加・レート制限・ログ | 未着手 |
 
 運営側の手作業は `SETUP_CHECKLIST.md` にまとめてある。
@@ -86,6 +86,7 @@ src/
   messages.py              参加者向けの文言(トーン調整はここに集約)
   discord_utils.py         メッセージ分割など Discord 固有の処理
   scope.py                 動作範囲(相談室フォーラム)の判定
+  attachments.py           画像・コードファイルの取り込みと上限
   check.py                 設定の診断コマンド(python -m src.check)
   cogs/mention.py          @bot メンションの受け口
   knowledge/loader.py      knowledge/ の読み込み

@@ -122,7 +122,7 @@ class Config:
             anthropic_model=_get("ANTHROPIC_MODEL") or "claude-opus-5",
             anthropic_summary_model=_get("ANTHROPIC_SUMMARY_MODEL") or "claude-haiku-4-5",
             anthropic_fallback_model=_get("ANTHROPIC_FALLBACK_MODEL"),
-            anthropic_effort=_get("ANTHROPIC_EFFORT") or "medium",
+            anthropic_effort=_get("ANTHROPIC_EFFORT") or "low",
             anthropic_max_tokens=_int_with_default("ANTHROPIC_MAX_TOKENS", 2000),
             summary_max_tokens=_int_with_default("SUMMARY_MAX_TOKENS", 1000),
             history_limit=_int_with_default("HISTORY_LIMIT", 20),
