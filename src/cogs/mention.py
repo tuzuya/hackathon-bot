@@ -16,7 +16,7 @@ from src.config import Config
 from src.discord_utils import split_message
 from src.llm.client import ClaudeClient, LLMError
 from src.llm.conversation import build_messages
-from src.scope import ForumScope
+from src.scope import ForumScope, team_name
 
 logger = logging.getLogger(__name__)
 
@@ -33,12 +33,10 @@ class MentionCog(commands.Cog):
         bot: commands.Bot,
         config: Config,
         llm: ClaudeClient | None,
-        system_prompt: str | None,
     ) -> None:
         self.bot = bot
         self.config = config
         self.llm = llm
-        self.system_prompt = system_prompt
         self.scope = ForumScope(
             channel_ids=config.forum_channel_ids,
             channel_name=config.forum_channel_name,
@@ -104,12 +102,21 @@ class MentionCog(commands.Cog):
             # 返信にすら失敗した場合。ここで落とすと Bot 全体が不安定になる
             logger.exception("メンションへの返信に失敗しました")
 
+    @property
+    def system_prompt(self) -> str | None:
+        """毎回 manager から取る。/add-knowledge で差し替わるため。"""
+        manager = getattr(self.bot, "knowledge_manager", None)
+        return manager.system_prompt if manager is not None else None
+
     async def _handle_question(self, message: discord.Message) -> None:
         """相談室の投稿内で呼ばれたときの処理。"""
         thread = message.channel
         assert isinstance(thread, discord.Thread)  # _is_consultation_thread で確認済み
 
         logger.info("質問を受信: thread=%s author=%s", thread.id, message.author.id)
+
+        if await self._rate_limited(message, thread):
+            return
 
         if self.llm is None or self.system_prompt is None:
             # ANTHROPIC_API_KEY が未設定(段階1の状態)。無言で落ちない
@@ -128,7 +135,10 @@ class MentionCog(commands.Cog):
                     logger.warning("履歴が空でした: thread=%s", thread.id)
                     await self._send(thread, message, messages.UNEXPECTED_ERROR)
                     return
-                answer = await self.llm.answer(self.system_prompt, history)
+                answer, usage = await self.llm.answer_with_usage(
+                    self.system_prompt, history
+                )
+                await self._record_usage(message, thread, usage)
             except LLMError:
                 logger.exception("LLM の呼び出しに失敗しました: thread=%s", thread.id)
                 await self._send(thread, message, messages.LLM_ERROR)
@@ -141,6 +151,90 @@ class MentionCog(commands.Cog):
             await self._send(thread, message, answer, with_button=True)
         finally:
             await self._remove_reaction(message)
+
+    async def _rate_limited(
+        self, message: discord.Message, thread: discord.Thread
+    ) -> bool:
+        """レート制限に当たっていたら、責めない文面で返して True。
+
+        上限は「普通に使えば絶対に当たらない」水準(SPEC §8.2)。
+        ここで参加者が質問をためらうようになったら本末転倒なので、
+        文面は必ず責めないものにする。
+        """
+        limiter = getattr(self.bot, "rate_limiter", None)
+        if limiter is None:
+            return False
+        verdict = await limiter.check(
+            team_name=team_name(thread), user_id=message.author.id
+        )
+        if verdict.allowed:
+            return False
+
+        logger.info(
+            "レート制限: reason=%s thread=%s user=%s",
+            verdict.reason,
+            thread.id,
+            message.author.id,
+        )
+        text = (
+            messages.RATE_LIMITED_USER
+            if verdict.reason == "user"
+            else messages.RATE_LIMITED_CHANNEL
+        )
+        await self._send(thread, message, text)
+        return True
+
+    async def _record_usage(
+        self,
+        message: discord.Message,
+        thread: discord.Thread,
+        usage: object,
+    ) -> None:
+        """質問ログを残す。レート制限のカウンタと /stats を兼ねる。"""
+        store = getattr(self.bot, "usage_store", None)
+        if store is None or message.guild is None:
+            return
+        try:
+            await store.record(
+                guild_id=message.guild.id,
+                thread_id=thread.id,
+                team_name=team_name(thread),
+                user_id=message.author.id,
+                usage=usage,
+                model=self.config.anthropic_model,
+            )
+            await self._check_usage_alert()
+        except Exception:
+            # ログが取れなくても回答は届けたい
+            logger.exception("質問ログの記録に失敗しました")
+
+    async def _check_usage_alert(self) -> None:
+        """累積コストが閾値を超えたら運営チャンネルへ知らせる(SPEC §8.4)。
+
+        これがあるから、参加者側のレート制限は緩くしていられる。
+        """
+        alerter = getattr(self.bot, "usage_alerter", None)
+        store = getattr(self.bot, "usage_store", None)
+        if alerter is None or store is None or self.config.admin_channel_id is None:
+            return
+        total = await store.total_cost()
+        threshold = await alerter.check(total)
+        if threshold is None:
+            return
+
+        channel = self.bot.get_channel(self.config.admin_channel_id)
+        if not isinstance(channel, discord.TextChannel):
+            return
+        questions = await store.total_questions()
+        try:
+            await channel.send(
+                messages.USAGE_ALERT.format(
+                    threshold=threshold, total=total, questions=questions
+                ),
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+        except discord.HTTPException:
+            logger.exception("使用量アラートの送信に失敗しました")
 
     async def _add_reaction(self, message: discord.Message) -> None:
         """受け取った合図。失敗しても回答は続行する。
@@ -215,6 +309,5 @@ async def setup(bot: commands.Bot) -> None:
             bot,
             bot.config,  # type: ignore[attr-defined]
             bot.llm,  # type: ignore[attr-defined]
-            bot.system_prompt,  # type: ignore[attr-defined]
         )
     )

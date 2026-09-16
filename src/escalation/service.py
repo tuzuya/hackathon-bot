@@ -17,6 +17,7 @@ from src.escalation import embeds
 from src.escalation.mentions import engineer_mentor_only
 from src.escalation.models import STATUS_LABELS, Escalation, Status
 from src.escalation.store import EscalationStore
+from src.knowledge.store import KnowledgeStore
 from src.escalation.summarizer import summarize
 from src.llm.client import ClaudeClient
 from src.llm.conversation import build_messages
@@ -34,12 +35,16 @@ class EscalationService:
         store: EscalationStore,
         llm: ClaudeClient | None,
         scope: ForumScope,
+        knowledge_store: KnowledgeStore | None = None,
+        on_knowledge_saved=None,
     ) -> None:
         self.bot = bot
         self.config = config
         self.store = store
         self.llm = llm
         self.scope = scope
+        self.knowledge_store = knowledge_store
+        self.on_knowledge_saved = on_knowledge_saved
 
     # --- 「解決しなかった」-------------------------------------------------
 
@@ -68,6 +73,7 @@ class EscalationService:
         await self._notify_thread(thread, escalation)
         await self._notify_queue(escalation, thread)
         await self._apply_tag(thread)
+        await self._notify_admin(escalation)
 
         await self._followup(interaction, messages.ESCALATION_DONE)
 
@@ -159,6 +165,35 @@ class EscalationService:
             return
 
         await self.store.set_queue_message(escalation.id, message.id)
+
+    async def _notify_admin(self, escalation: Escalation) -> None:
+        """Bot管理チャンネルへナレッジ化の候補を流す(SPEC §4.2)。
+
+        **エスカレーションされた案件だけ**を流す。全質疑を流すと
+        22 チーム分で 1 日数百件になり、運営が見きれない。
+        ナレッジ化したいのは「Bot が答えられなかった質問」なので、
+        エスカレーションがちょうどよい絞り込みになる。
+        """
+        if self.knowledge_store is None or self.on_knowledge_saved is None:
+            return
+        channel_id = self.config.admin_channel_id
+        if channel_id is None:
+            return
+        channel = self.bot.get_channel(channel_id)
+        if not isinstance(channel, discord.TextChannel):
+            logger.warning("ADMIN_CHANNEL_ID のチャンネルが見つかりません")
+            return
+
+        from src.escalation.approval import ApprovalView, candidate_embed
+
+        try:
+            await channel.send(
+                embed=candidate_embed(escalation),
+                view=ApprovalView(self.knowledge_store, self.on_knowledge_saved),
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+        except discord.HTTPException:
+            logger.exception("Bot管理への通知に失敗: escalation=%s", escalation.id)
 
     async def _apply_tag(self, thread: discord.Thread) -> None:
         """「要対応」タグを付ける(SPEC §5.3)。参加者からも状態が見える。"""

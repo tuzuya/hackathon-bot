@@ -26,7 +26,7 @@ def _make_cog() -> MentionCog:
     bot = MagicMock()
     bot.user = MagicMock()
     bot.user.id = 42
-    return MentionCog(bot, config, llm=None, system_prompt=None)
+    return MentionCog(bot, config, llm=None)
 
 
 def _thread(parent_id: int) -> MagicMock:

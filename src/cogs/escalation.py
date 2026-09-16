@@ -28,6 +28,12 @@ class EscalationCog(commands.Cog):
         # (CLAUDE.md「ボタン(Views)」)。custom_id が固定なので再登録できる。
         self.bot.add_view(UnresolvedView(self.service))
         self.bot.add_view(QueueView(self.service))
+        if self.service.knowledge_store is not None and self.service.on_knowledge_saved:
+            from src.escalation.approval import ApprovalView
+
+            self.bot.add_view(
+                ApprovalView(self.service.knowledge_store, self.service.on_knowledge_saved)
+            )
         logger.info("永続 View を再登録しました")
         self.expire_loop.start()
 

@@ -41,6 +41,20 @@ class ClaudeClient:
     async def close(self) -> None:
         await self._client.close()
 
+    async def answer_with_usage(
+        self, system_prompt: str, messages: list[MessageParam]
+    ) -> tuple[str, Any]:
+        """回答と usage を返す。usage は質問ログとコスト監視に使う。"""
+        return await self._create(
+            model=self._config.anthropic_model,
+            system_prompt=system_prompt,
+            messages=messages,
+            max_tokens=self._config.anthropic_max_tokens,
+            effort=self._config.anthropic_effort,
+            cache_system=True,
+            return_usage=True,
+        )
+
     async def answer(self, system_prompt: str, messages: list[MessageParam]) -> str:
         """参加者への回答を生成する。
 
@@ -80,7 +94,8 @@ class ClaudeClient:
         max_tokens: int,
         effort: str | None,
         cache_system: bool,
-    ) -> str:
+        return_usage: bool = False,
+    ) -> Any:
         system: Any = system_prompt
         if cache_system:
             # 知識源を含む固定部分の直後にキャッシュのブレークポイントを置く。
@@ -146,6 +161,8 @@ class ClaudeClient:
         ).strip()
         if not text:
             raise LLMError(f"モデルが空の応答を返しました (stop_reason={response.stop_reason})。")
+        if return_usage:
+            return text, getattr(response, "usage", None)
         return text
 
     @staticmethod

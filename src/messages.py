@@ -118,3 +118,33 @@ COMPLETE_SUCCESS = "完了にしました。お疲れさまでした。"
 TIMEOUT_REVERTED = (
     "対応中のまま {minutes} 分経過したため、未対応に戻しました。"
 )
+
+
+# ============================================================
+# 運営向け(段階6)
+# ============================================================
+
+# Bot管理チャンネルに流す、ナレッジ化の候補
+KNOWLEDGE_CANDIDATE_TITLE = "ナレッジ化の候補"
+KNOWLEDGE_CANDIDATE_HINT = (
+    "Bot が答えきれなかった質問です。\n"
+    "他チームにも共有する価値があれば「共有ナレッジに追加」を押してください。\n"
+    "**押すと編集画面が開くので、チーム名や個人名はそこで消してください。**"
+)
+ADD_KNOWLEDGE_BUTTON_LABEL = "共有ナレッジに追加"
+
+KNOWLEDGE_ADDED = "共有ナレッジに追加しました(#{entry_id})。全チームの回答に反映されます。"
+KNOWLEDGE_REMOVED = "ナレッジ #{entry_id} を無効化しました。"
+KNOWLEDGE_NOT_FOUND = "ナレッジ #{entry_id} が見つからないか、すでに無効です。"
+KNOWLEDGE_EMPTY = "登録されているナレッジはありません。"
+KNOWLEDGE_RELOAD_FAILED = (
+    "ナレッジは保存しましたが、プロンプトの再構築に失敗しました。ログを確認してください。"
+)
+
+NOT_ENGINEER_MENTOR = "このコマンドはエンジニアメンターだけが使えます。"
+
+# 使用量アラート(SPEC §8.4)
+USAGE_ALERT = (
+    "⚠️ Claude API の累積使用量が **${threshold:.0f}** を超えました"
+    "(現在の概算 ${total:.2f} / 質問 {questions} 件)。"
+)

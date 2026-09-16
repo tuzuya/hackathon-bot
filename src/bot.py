@@ -16,9 +16,11 @@ from src.config import Config, ConfigError
 from src.db.database import Database
 from src.escalation.service import EscalationService
 from src.escalation.store import EscalationStore
-from src.knowledge.loader import load_knowledge
+from src.knowledge.manager import KnowledgeManager
+from src.knowledge.store import KnowledgeStore
 from src.llm.client import ClaudeClient, LLMError
-from src.llm.prompt import build_system_prompt
+from src.ratelimit import RateLimiter
+from src.usage import UsageAlerter, UsageStore
 from src.scope import ForumScope
 
 logger = logging.getLogger(__name__)
@@ -27,6 +29,7 @@ logger = logging.getLogger(__name__)
 INITIAL_EXTENSIONS: tuple[str, ...] = (
     "src.cogs.mention",
     "src.cogs.escalation",
+    "src.cogs.admin",
 )
 
 
@@ -50,22 +53,50 @@ class HackathonBot(commands.Bot):
         self.config = config
         # ANTHROPIC_API_KEY 未設定でも起動できるようにする(段階1の疎通確認のため)
         self.llm: ClaudeClient | None = None
-        self.system_prompt: str | None = None
         self.database = Database(config.db_path)
         self.escalation_service: EscalationService | None = None
+        self.knowledge_manager: KnowledgeManager | None = None
+        self.rate_limiter: RateLimiter | None = None
+        self.usage_store: UsageStore | None = None
+        self.usage_alerter: UsageAlerter | None = None
+        self.admin_dependencies: tuple | None = None
 
     async def setup_hook(self) -> None:
-        self._setup_llm()
         await self.database.connect()
+        connection = self.database.connection
+
+        knowledge_store = KnowledgeStore(connection)
+        self.knowledge_manager = KnowledgeManager(self.config, knowledge_store)
+        self.usage_store = UsageStore(connection)
+        self.usage_alerter = UsageAlerter(
+            connection, self.config.usage_alert_thresholds
+        )
+        self.rate_limiter = RateLimiter(
+            connection,
+            per_team_hourly=self.config.rate_limit_per_channel_hourly,
+            per_user_seconds=self.config.rate_limit_per_user_seconds,
+        )
+
+        self._setup_llm()
+        await self._load_prompt()
+
         self.escalation_service = EscalationService(
             bot=self,
             config=self.config,
-            store=EscalationStore(self.database.connection),
+            store=EscalationStore(connection),
             llm=self.llm,
             scope=ForumScope(
                 channel_ids=self.config.forum_channel_ids,
                 channel_name=self.config.forum_channel_name,
             ),
+            knowledge_store=knowledge_store,
+            on_knowledge_saved=self._reload_prompt,
+        )
+        self.admin_dependencies = (
+            self.config,
+            knowledge_store,
+            self.knowledge_manager,
+            self.usage_store,
         )
 
         for extension in INITIAL_EXTENSIONS:
@@ -75,11 +106,9 @@ class HackathonBot(commands.Bot):
         # 永続 View の再登録は EscalationCog.cog_load() で行う。
 
     def _setup_llm(self) -> None:
-        """知識源を読み、システムプロンプトを一度だけ組み立てる。
+        """Claude クライアントを用意する。
 
-        システムプロンプトはプロセスの生存中ずっと同じ文字列を使い回す。
-        リクエストごとに変わるとプロンプトキャッシュが効かなくなるため
-        (CLAUDE.md「RAG は実装しない」)。
+        ANTHROPIC_API_KEY が無くても起動できるようにしてある(段階1の疎通確認用)。
         """
         if self.config.anthropic_api_key is None:
             logger.warning(
@@ -87,23 +116,34 @@ class HackathonBot(commands.Bot):
             )
             return
         try:
-            knowledge = load_knowledge(self.config.knowledge_dir)
-            self.system_prompt = build_system_prompt(
-                self.config.system_prompt_path,
-                knowledge,
-                self.config.forum_channel_name,
-            )
             self.llm = ClaudeClient(self.config)
-        except (FileNotFoundError, LLMError, RuntimeError):
-            logger.exception("LLM の初期化に失敗しました。固定文での応答に切り替えます。")
+        except LLMError:
+            logger.exception("Claude クライアントの初期化に失敗しました")
             self.llm = None
-            self.system_prompt = None
+
+    async def _load_prompt(self) -> None:
+        """知識源を読み、システムプロンプトを組み立てる。
+
+        リクエストごとに組み直すとプロンプトキャッシュが効かないため、
+        起動時と、知識が変わったときだけ実行する。
+        """
+        if self.knowledge_manager is None:
             return
-        logger.info(
-            "システムプロンプトを構築しました: %d 文字 / モデル=%s",
-            len(self.system_prompt),
-            self.config.anthropic_model,
-        )
+        try:
+            await self.knowledge_manager.reload()
+        except Exception:
+            logger.exception("システムプロンプトの構築に失敗しました。固定文で応答します")
+
+    async def _reload_prompt(self) -> bool:
+        """知識が追加・削除されたときに呼ばれる。"""
+        if self.knowledge_manager is None:
+            return False
+        try:
+            await self.knowledge_manager.reload()
+        except Exception:
+            logger.exception("システムプロンプトの再構築に失敗しました")
+            return False
+        return True
 
     async def close(self) -> None:
         if self.llm is not None:
@@ -124,6 +164,24 @@ class HackathonBot(commands.Bot):
     async def on_ready(self) -> None:
         logger.info("ログインしました: %s (id=%s)", self.user, getattr(self.user, "id", "?"))
         self._report_scope()
+        await self._sync_commands()
+
+    async def _sync_commands(self) -> None:
+        """スラッシュコマンドを同期する。
+
+        ギルド単位の同期は即座に反映される(グローバルは最大 1 時間かかる)。
+        """
+        for guild in self.guilds:
+            try:
+                self.tree.copy_global_to(guild=guild)
+                synced = await self.tree.sync(guild=guild)
+                logger.info(
+                    "スラッシュコマンドを同期しました: %s (%d 件)",
+                    guild.name,
+                    len(synced),
+                )
+            except discord.HTTPException:
+                logger.exception("スラッシュコマンドの同期に失敗: %s", guild.name)
 
     def _report_scope(self) -> None:
         """実際に何個のフォーラムを見ているかを起動時に出す。

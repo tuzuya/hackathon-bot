@@ -52,6 +52,17 @@ def _int_with_default(name: str, default: int) -> int:
     return default if value is None else value
 
 
+def _float_list(name: str, default: list[float]) -> list[float]:
+    """カンマ区切りの金額。使用量アラートの閾値に使う。"""
+    raw = _get(name)
+    if raw is None:
+        return default
+    try:
+        return sorted(float(part) for part in raw.split(",") if part.strip())
+    except ValueError as exc:
+        raise ConfigError(f"環境変数 {name} は数値のカンマ区切りで指定してください。") from exc
+
+
 def _optional_int_list(name: str) -> list[int]:
     """カンマ区切りの ID 列を読む。未設定なら空リスト。"""
     raw = _get(name)
@@ -106,6 +117,7 @@ class Config:
     admin_channel_id: int | None
     rate_limit_per_channel_hourly: int
     rate_limit_per_user_seconds: int
+    usage_alert_thresholds: list[float]
 
     # --- 永続化 ---
     db_path: Path
@@ -139,6 +151,9 @@ class Config:
             admin_channel_id=_optional_int("ADMIN_CHANNEL_ID"),
             rate_limit_per_channel_hourly=_int_with_default("RATE_LIMIT_PER_CHANNEL_HOURLY", 40),
             rate_limit_per_user_seconds=_int_with_default("RATE_LIMIT_PER_USER_SECONDS", 5),
+            usage_alert_thresholds=_float_list(
+                "USAGE_ALERT_THRESHOLDS", [10.0, 25.0, 50.0, 100.0, 200.0]
+            ),
             db_path=Path(_get("DB_PATH") or "./data/bot.db"),
             log_level=(_get("LOG_LEVEL") or "INFO").upper(),
         )
