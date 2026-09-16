@@ -123,8 +123,12 @@ class MentionCog(commands.Cog):
             return
 
         if self.llm is None or self.system_prompt is None:
-            # ANTHROPIC_API_KEY が未設定(段階1の状態)。無言で落ちない
-            await self._send(thread, message, messages.STAGE1_PLACEHOLDER)
+            # API キーの不備や知識源の読み込み失敗。無言で落ちない。
+            # 「待ってて」ではなく「壊れている」と伝える(待っても直らない)
+            logger.error(
+                "LLM が利用できない状態で質問を受けました: thread=%s", thread.id
+            )
+            await self._send(thread, message, messages.NOT_READY)
             return
 
         await self._add_reaction(message)

@@ -124,3 +124,23 @@ class ReactionFailureTest(unittest.IsolatedAsyncioTestCase):
             side_effect=discord.HTTPException(MagicMock(status=404), "not found")
         )
         await cog._remove_reaction(message)
+
+
+class NotReadyMessageTest(unittest.TestCase):
+    """Bot が回答できない状態のときの文面。
+
+    「準備中だから待ってて」と言うと、参加者は待っても直らないものを
+    待ち続ける。壊れていることを伝えて人に回さなければならない。
+    """
+
+    def test_待つように促していない(self) -> None:
+        from src import messages
+
+        text = messages.NOT_READY
+        for forbidden in ("待っててね", "準備してる", "もう少し"):
+            self.assertNotIn(forbidden, text)
+
+    def test_メンターへ誘導している(self) -> None:
+        from src import messages
+
+        self.assertIn("メンター", messages.NOT_READY)

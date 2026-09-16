@@ -70,12 +70,27 @@ class HealthCog(commands.Cog):
 
     # --- 表示 --------------------------------------------------------------
 
+    def _is_answering(self) -> bool:
+        """LLM と知識源が揃っていて、実際に回答できる状態か。"""
+        manager = getattr(self.bot, "knowledge_manager", None)
+        return getattr(self.bot, "llm", None) is not None and (
+            manager is not None and manager.is_ready
+        )
+
     def _embed(self, *, running: bool) -> discord.Embed:
         now = datetime.now(UTC).astimezone(JST)
+        if not running:
+            state, color = messages.HEALTH_STOPPED, discord.Color.red()
+        elif self._is_answering():
+            state, color = messages.HEALTH_RUNNING, discord.Color.green()
+        else:
+            # プロセスは生きているが質問に答えられない。
+            # 稼働中と表示すると、誰も異常に気づけない
+            state, color = messages.HEALTH_DEGRADED, discord.Color.orange()
         embed = discord.Embed(
             title=messages.HEALTH_TITLE,
-            description=messages.HEALTH_RUNNING if running else messages.HEALTH_STOPPED,
-            color=discord.Color.green() if running else discord.Color.red(),
+            description=state,
+            color=color,
         )
         embed.add_field(
             name="最終更新", value=now.strftime("%m/%d %H:%M:%S"), inline=True
