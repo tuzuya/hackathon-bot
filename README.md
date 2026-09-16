@@ -31,6 +31,16 @@ cp .env.example .env               # 値を埋める
 22 チーム分の ID を集める必要はない。
 他の変数は未設定でも起動でき、起動時に「まだ設定されていない」旨が警告ログに出る。
 
+## 本番サーバーの構築
+
+```bash
+python -m src.setup_server --count 22 --format "{n}班"          # 確認のみ
+python -m src.setup_server --count 22 --format "{n}班" --apply  # 実行
+```
+
+22 チーム分のカテゴリ・フォーラム・タグ・ロール・メンター用チャンネルを一括で作る。
+**既定は dry-run**で、`--apply` を付けたときだけ作成する。既にあるものは飛ばす。
+
 ## 設定の診断(起動前に実行する)
 
 ```bash
@@ -116,6 +126,7 @@ src/
   cogs/admin.py            運営向けスラッシュコマンド
   cogs/health.py           稼働状況の可視化(無言で死んだときの検知)
   guide.py                 初回案内の一括投稿
+  setup_server.py          本番サーバーの構築(python -m src.setup_server)
   check.py                 設定の診断コマンド(python -m src.check)
   cogs/mention.py          @bot メンションの受け口
   knowledge/loader.py      knowledge/ の読み込み

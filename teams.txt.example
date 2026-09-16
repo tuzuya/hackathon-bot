@@ -1,0 +1,14 @@
+# チーム名を1行ずつ書く。この名前がそのままカテゴリ名になり、
+# Bot がキュー通知に出す「チーム名」にもなる。
+# # で始まる行と空行は無視される。
+#
+# 使い方:
+#   cp teams.txt.example teams.txt   (中身を実際のチーム名に書き換える)
+#   python -m src.setup_server --teams-file teams.txt
+#
+# 単純な連番でよければ、このファイルは不要:
+#   python -m src.setup_server --count 22 --format "{n}班"
+
+1班
+2班
+3班
