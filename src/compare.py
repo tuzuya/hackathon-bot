@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import sys
 import time
 from dataclasses import dataclass
@@ -41,45 +42,94 @@ CONFIGURATIONS: list[tuple[str, str]] = [
 
 @dataclass(frozen=True)
 class Question:
-    """検証したい振る舞いと、それを引き出す質問。"""
+    """検証したい振る舞いと、それを引き出す質問。
+
+    turns が 2 つ以上なら複数ターンの会話として実行する
+    (文脈保持が effort やモデルで劣化しないかを見るため)。
+    """
 
     label: str
     checks: str
     title: str
-    text: str
+    turns: list[str]
+    # (説明, 正規表現) — 最後の回答に含まれていてほしいもの
+    expect: list[tuple[str, str]]
+    # (説明, 正規表現) — 含まれていたら疑わしいもの
+    warn: list[tuple[str, str]]
+
+
+# 日付・時刻の表現。運営情報を知識源なしで答えていたら事故。
+DATETIME_PATTERN = r"\d{1,2}\s*[:時]\s*\d{0,2}|\d{1,2}\s*月\s*\d{1,2}\s*日"
+# 環境を聞き返す表現
+ASK_OS_PATTERN = r"どの環境|どのOS|どの os|Windows.{0,10}Mac|環境を教え|OS を教え|OSを教え"
 
 
 # SPEC §6 で決めた振る舞いを、それぞれ狙って引き出す質問。
 QUESTIONS: list[Question] = [
     Question(
         label="環境構築(知識源にある)",
-        checks="PAT かSSH の話に着地するか。知識源の内容を正しく使えているか",
+        checks="PAT か SSH の話に着地するか。知識源の内容を正しく使えているか",
         title="githubにpushできない",
-        text="githubにpushしようとしたらパスワードが違うって言われる",
+        turns=["githubにpushしようとしたらパスワードが違うって言われる"],
+        expect=[("トークン or SSH に言及", r"トークン|Personal Access Token|PAT|SSH")],
+        warn=[],
     ),
     Question(
         label="手順もの(段階的に出せるか)",
-        checks="SPEC §6.2「手順は一度に全部出さない」を守れているか。長すぎないか",
+        checks="SPEC §6.2「手順は一度に全部出さない」を守れているか",
         title="コンフリクトした",
-        text="git pullしたらCONFLICTって出た。どうしたらいい?",
+        turns=["git pullしたらCONFLICTって出た。どうしたらいい?"],
+        expect=[("git status に言及", r"git status")],
+        warn=[("手順を出しすぎの疑い(6ステップ以上)", r"(?s)6\.\s|ステップ6|手順6")],
     ),
     Question(
         label="担当外(プロンプト骨組み)",
-        checks="担当外だと伝えた上で、コピペできる雛形を出せるか(SPEC §2.4)",
+        checks="担当外と伝えた上で、コピペできる雛形を出せるか(SPEC §2.4)",
         title="Reactの不具合",
-        text="Reactでボタン押してもstateが更新されないんだけど、どこが悪いのかな",
+        turns=["Reactでボタン押してもstateが更新されないんだけど、どこが悪いのかな"],
+        expect=[
+            ("プロンプトの雛形を提示", r"【前提】|【やりたいこと】|【エラー全文】"),
+            ("コードブロックで渡している", r"```"),
+        ],
+        warn=[("担当外なのに実装を説明している疑い", r"useState|setState\(|useEffect")],
     ),
     Question(
         label="運営情報(知識源に無い)★最重要",
         checks="推測で答えていないか。メンターへの確認を促せているか(SPEC §6.3)",
         title="提出について",
-        text="提出期限っていつだっけ?あと何を提出すればいいの?",
+        turns=["提出期限っていつだっけ?あと何を提出すればいいの?"],
+        expect=[("メンター/運営への確認を促す", r"メンター|運営|確認")],
+        warn=[("具体的な日時を答えている(ハルシネーションの疑い)", DATETIME_PATTERN)],
     ),
     Question(
-        label="OS 不明(聞き返しの作法)",
-        checks="1回だけ聞き返しているか。見分け方と逃げ道を添えているか(SPEC §6.4)",
+        label="OS 不明(スクショ誘導)★重要",
+        checks="1回だけ聞き返し、見分け方と『スクショを送って』の逃げ道を添えているか(SPEC §6.4)",
         title="npmが動かない",
-        text="npm installしたらエラーが出る",
+        turns=["npm installしたらエラーが出る"],
+        expect=[
+            ("スクショ送付を促している", r"スクショ|スクリーンショット|画面.{0,6}(撮|送)"),
+            ("見分け方を添えている", r"Windows|Mac|WSL"),
+        ],
+        warn=[],
+    ),
+    Question(
+        label="OS 判明済み(聞き返さないか)",
+        checks="SPEC §6.4「環境が既に分かっているなら絶対に聞き返さない」を守れているか",
+        title="npmが動かない",
+        turns=["Macを使ってるんだけど、npm installでエラーが出る"],
+        expect=[],
+        warn=[("OS が分かっているのに聞き返している", ASK_OS_PATTERN)],
+    ),
+    Question(
+        label="複数ターン(文脈保持)",
+        checks="2ターン目で話題を見失っていないか。effort を下げても保てるか",
+        title="githubにpushできない",
+        turns=[
+            "githubにpushしようとしたらパスワードが違うって言われる",
+            "Macです",
+        ],
+        expect=[("push の話を継続している", r"トークン|SSH|ssh-keygen|pbcopy|push|GitHub")],
+        warn=[("話題を見失っている疑い", r"何について|どういったこと|もう一度.{0,6}教え")],
     ),
 ]
 
@@ -89,12 +139,17 @@ class Result:
     model: str
     effort: str
     question: Question
-    answer: str
+    # (質問, 回答) をターン順に
+    exchanges: list[tuple[str, str]]
     seconds: float
     input_tokens: int
     cache_write: int
     cache_read: int
     output_tokens: int
+
+    @property
+    def final_answer(self) -> str:
+        return self.exchanges[-1][1] if self.exchanges else ""
 
     @property
     def cost(self) -> float:
@@ -120,6 +175,18 @@ class Result:
             + self.output_tokens * out_price
         ) / 1_000_000
 
+    def evaluate(self) -> list[str]:
+        """自動で拾える目印を返す。良し悪しの判定ではなく、人間が見る箇所の絞り込み。"""
+        marks: list[str] = []
+        answer = self.final_answer
+        for description, pattern in self.question.expect:
+            hit = re.search(pattern, answer, re.IGNORECASE) is not None
+            marks.append(f"{'✅' if hit else '❌'} {description}")
+        for description, pattern in self.question.warn:
+            if re.search(pattern, answer, re.IGNORECASE):
+                marks.append(f"⚠️ {description}")
+        return marks
+
 
 async def run_one(
     client: anthropic.AsyncAnthropic,
@@ -128,36 +195,50 @@ async def run_one(
     effort: str,
     question: Question,
 ) -> Result:
+    """1 つの質問を、必要なターン数ぶん実行する。"""
     started = time.monotonic()
-    response = await client.messages.create(
-        model=model,
-        max_tokens=2000,
-        system=[
-            {
-                "type": "text",
-                "text": system_prompt,
-                "cache_control": {"type": "ephemeral"},
-            }
-        ],
-        output_config={"effort": effort},
-        messages=[
-            {"role": "user", "content": f"【この投稿のタイトル】{question.title}"},
-            {"role": "user", "content": question.text},
-        ],
-    )
-    elapsed = time.monotonic() - started
-    usage = response.usage
-    text = "".join(b.text for b in response.content if b.type == "text").strip()
+    messages: list[dict] = [
+        {"role": "user", "content": f"【この投稿のタイトル】{question.title}"}
+    ]
+    exchanges: list[tuple[str, str]] = []
+    totals = {"input": 0, "write": 0, "read": 0, "output": 0}
+
+    for turn in question.turns:
+        messages.append({"role": "user", "content": turn})
+        response = await client.messages.create(
+            model=model,
+            max_tokens=2000,
+            system=[
+                {
+                    "type": "text",
+                    "text": system_prompt,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+            output_config={"effort": effort},
+            messages=messages,  # type: ignore[arg-type]
+        )
+        text = "".join(b.text for b in response.content if b.type == "text").strip()
+        exchanges.append((turn, text))
+        # 次のターンのために、Bot の発言を履歴へ入れる(本番と同じ形)
+        messages.append({"role": "assistant", "content": text})
+
+        usage = response.usage
+        totals["input"] += usage.input_tokens or 0
+        totals["write"] += usage.cache_creation_input_tokens or 0
+        totals["read"] += usage.cache_read_input_tokens or 0
+        totals["output"] += usage.output_tokens or 0
+
     return Result(
         model=model,
         effort=effort,
         question=question,
-        answer=text,
-        seconds=elapsed,
-        input_tokens=usage.input_tokens or 0,
-        cache_write=usage.cache_creation_input_tokens or 0,
-        cache_read=usage.cache_read_input_tokens or 0,
-        output_tokens=usage.output_tokens or 0,
+        exchanges=exchanges,
+        seconds=time.monotonic() - started,
+        input_tokens=totals["input"],
+        cache_write=totals["write"],
+        cache_read=totals["read"],
+        output_tokens=totals["output"],
     )
 
 
@@ -166,12 +247,13 @@ def write_report(results: list[Result], path: Path) -> None:
         "# モデル / effort の比較結果",
         "",
         "同じシステムプロンプトと同じ質問を、設定を変えて実行したもの。",
-        "**回答の良し悪しは人間が判断すること。**",
+        "**✅ / ❌ / ⚠️ は自動で拾った目印であって、品質の判定ではない。**",
+        "見る箇所を絞るための手がかりとして使い、回答そのものは必ず目で読むこと。",
         "",
         "## 設定ごとの集計",
         "",
-        "| モデル | effort | 平均秒数 | 平均出力トークン | 1問あたり(キャッシュ温時) |",
-        "|---|---|---|---|---|",
+        "| モデル | effort | 平均秒数 | 平均出力トークン | 1問あたり(キャッシュ温時) | 期待を満たした数 | 要注意の数 |",
+        "|---|---|---|---|---|---|---|",
     ]
 
     by_config: dict[tuple[str, str], list[Result]] = {}
@@ -182,14 +264,35 @@ def write_report(results: list[Result], path: Path) -> None:
         avg_sec = sum(r.seconds for r in group) / len(group)
         avg_out = sum(r.output_tokens for r in group) / len(group)
         avg_cost = sum(r.steady_state_cost for r in group) / len(group)
+        marks = [m for r in group for m in r.evaluate()]
+        passed = sum(1 for m in marks if m.startswith("✅"))
+        expected = sum(1 for m in marks if m.startswith(("✅", "❌")))
+        warned = sum(1 for m in marks if m.startswith("⚠️"))
         lines.append(
-            f"| {model} | {effort} | {avg_sec:.1f}s | {avg_out:.0f} | ${avg_cost:.4f} |"
+            f"| {model} | {effort} | {avg_sec:.1f}s | {avg_out:.0f} | "
+            f"${avg_cost:.4f} | {passed}/{expected} | {warned} |"
         )
 
-    lines += ["", "## 質問ごとの回答", ""]
+    lines += [
+        "",
+        "## 特に見てほしい箇所",
+        "",
+        "- **運営情報(知識源に無い)** — 具体的な日時を答えていたら、その設定は採用できない",
+        "- **OS 不明(スクショ誘導)** — 「スクショ送って」の逃げ道が出ているか。"
+        "初心者は自力で OS を判別できない",
+        "- **複数ターン** — 2 ターン目で話題を見失っていないか",
+        "",
+        "## 質問ごとの回答",
+        "",
+    ]
+
     for question in QUESTIONS:
-        lines += [f"### {question.label}", "", f"> {question.text}", "",
-                  f"**見るべき点:** {question.checks}", ""]
+        lines += [
+            f"### {question.label}",
+            "",
+            f"**見るべき点:** {question.checks}",
+            "",
+        ]
         for (model, effort), group in by_config.items():
             match = next((r for r in group if r.question.label == question.label), None)
             if match is None:
@@ -200,11 +303,14 @@ def write_report(results: list[Result], path: Path) -> None:
                 f"`{match.seconds:.1f}秒 / 出力{match.output_tokens}トークン "
                 f"/ ${match.steady_state_cost:.4f}`",
                 "",
-                match.answer,
-                "",
-                "---",
-                "",
             ]
+            marks = match.evaluate()
+            if marks:
+                lines += [" ".join(marks), ""]
+            for turn_text, answer in match.exchanges:
+                lines += [f"> **質問:** {turn_text}", "", answer, ""]
+            lines += ["---", ""]
+
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -222,9 +328,13 @@ async def main() -> None:
     system_prompt = build_system_prompt(
         config.system_prompt_path, knowledge, config.forum_channel_name
     )
-    total_calls = len(CONFIGURATIONS) * len(QUESTIONS)
+    turns_total = sum(len(q.turns) for q in QUESTIONS)
+    total_calls = len(CONFIGURATIONS) * turns_total
     print(f"\nシステムプロンプト: {len(system_prompt):,} 文字")
-    print(f"{len(CONFIGURATIONS)} 設定 × {len(QUESTIONS)} 問 = {total_calls} 回の API 呼び出し\n")
+    print(
+        f"{len(CONFIGURATIONS)} 設定 × {len(QUESTIONS)} 問({turns_total} ターン) "
+        f"= {total_calls} 回の API 呼び出し\n"
+    )
 
     client = anthropic.AsyncAnthropic(api_key=config.anthropic_api_key, timeout=180.0)
     results: list[Result] = []
@@ -237,9 +347,11 @@ async def main() -> None:
                 result = await run_one(client, system_prompt, model, effort, question)
                 results.append(result)
                 actual_cost += result.cost
+                marks = result.evaluate()
+                flags = " ".join(m.split()[0] for m in marks) if marks else ""
                 print(
                     f"   {question.label}: {result.seconds:.1f}秒 "
-                    f"/ 出力{result.output_tokens} / 読込{result.cache_read:,}"
+                    f"/ 出力{result.output_tokens} {flags}"
                 )
     except anthropic.APIStatusError as exc:
         print(f"\nAPI エラー (status={exc.status_code}): {exc.message}", file=sys.stderr)

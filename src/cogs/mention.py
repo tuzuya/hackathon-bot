@@ -138,7 +138,7 @@ class MentionCog(commands.Cog):
                 await self._send(thread, message, messages.UNEXPECTED_ERROR)
                 return
 
-            await self._send(thread, message, answer)
+            await self._send(thread, message, answer, with_button=True)
         finally:
             await self._remove_reaction(message)
 
@@ -168,21 +168,44 @@ class MentionCog(commands.Cog):
         thread: discord.Thread,
         original: discord.Message,
         text: str,
+        *,
+        with_button: bool = False,
     ) -> None:
         """回答を送る。2000 字を超える場合は分割する。
 
         1通目だけ質問への返信にし、2通目以降はスレッドに続けて流す。
+        「解決しなかった」ボタンは最後のメッセージにだけ付ける(SPEC §5.1)。
+        エラー文には付けない(押しても状況が伝わらないため)。
         """
         chunks = split_message(text)
+        if not chunks:
+            return
+
+        view = self._unresolved_view() if with_button else None
+        last_index = len(chunks) - 1
+
         for index, chunk in enumerate(chunks):
+            attachment = view if index == last_index else None
+            kwargs = {"allowed_mentions": NO_MENTIONS}
+            if attachment is not None:
+                kwargs["view"] = attachment
             if index == 0:
-                await original.reply(
-                    chunk,
-                    allowed_mentions=NO_MENTIONS,
-                    mention_author=False,
-                )
+                await original.reply(chunk, mention_author=False, **kwargs)
             else:
-                await thread.send(chunk, allowed_mentions=NO_MENTIONS)
+                await thread.send(chunk, **kwargs)
+
+    def _unresolved_view(self) -> discord.ui.View | None:
+        """「解決しなかった」ボタン。
+
+        SPEC §5.1 より、回答の文章ではボタンに触れない。常時添えるだけ。
+        エスカレーションが使えない状態なら付けない(押しても動かないボタンは害)。
+        """
+        service = getattr(self.bot, "escalation_service", None)
+        if service is None:
+            return None
+        from src.escalation.views import UnresolvedView
+
+        return UnresolvedView(service)
 
 
 async def setup(bot: commands.Bot) -> None:

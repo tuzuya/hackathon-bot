@@ -13,6 +13,9 @@ import discord
 from discord.ext import commands
 
 from src.config import Config, ConfigError
+from src.db.database import Database
+from src.escalation.service import EscalationService
+from src.escalation.store import EscalationStore
 from src.knowledge.loader import load_knowledge
 from src.llm.client import ClaudeClient, LLMError
 from src.llm.prompt import build_system_prompt
@@ -21,7 +24,10 @@ from src.scope import ForumScope
 logger = logging.getLogger(__name__)
 
 # 読み込む Cog。段階が進むごとにここへ追加する。
-INITIAL_EXTENSIONS: tuple[str, ...] = ("src.cogs.mention",)
+INITIAL_EXTENSIONS: tuple[str, ...] = (
+    "src.cogs.mention",
+    "src.cogs.escalation",
+)
 
 
 class HackathonBot(commands.Bot):
@@ -45,15 +51,28 @@ class HackathonBot(commands.Bot):
         # ANTHROPIC_API_KEY 未設定でも起動できるようにする(段階1の疎通確認のため)
         self.llm: ClaudeClient | None = None
         self.system_prompt: str | None = None
+        self.database = Database(config.db_path)
+        self.escalation_service: EscalationService | None = None
 
     async def setup_hook(self) -> None:
         self._setup_llm()
+        await self.database.connect()
+        self.escalation_service = EscalationService(
+            bot=self,
+            config=self.config,
+            store=EscalationStore(self.database.connection),
+            llm=self.llm,
+            scope=ForumScope(
+                channel_ids=self.config.forum_channel_ids,
+                channel_name=self.config.forum_channel_name,
+            ),
+        )
 
         for extension in INITIAL_EXTENSIONS:
             await self.load_extension(extension)
             logger.info("Cog を読み込みました: %s", extension)
 
-        # 段階4で、永続 View をここで bot.add_view() 再登録する。
+        # 永続 View の再登録は EscalationCog.cog_load() で行う。
 
     def _setup_llm(self) -> None:
         """知識源を読み、システムプロンプトを一度だけ組み立てる。
@@ -89,6 +108,7 @@ class HackathonBot(commands.Bot):
     async def close(self) -> None:
         if self.llm is not None:
             await self.llm.close()
+        await self.database.close()
         await super().close()
 
     async def process_commands(self, message: discord.Message) -> None:
