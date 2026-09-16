@@ -53,6 +53,7 @@ class ClaudeClient:
             effort=self._config.anthropic_effort,
             cache_system=True,
             return_usage=True,
+            allow_fallback=True,
         )
 
     async def answer(self, system_prompt: str, messages: list[MessageParam]) -> str:
@@ -68,6 +69,7 @@ class ClaudeClient:
             max_tokens=self._config.anthropic_max_tokens,
             effort=self._config.anthropic_effort,
             cache_system=True,
+            allow_fallback=True,
         )
 
     async def summarize(self, system_prompt: str, messages: list[MessageParam]) -> str:
@@ -75,6 +77,11 @@ class ClaudeClient:
 
         軽い処理なので下位モデルに振る(SPEC §9.1)。
         知識源を渡さないのでキャッシュはしない。
+
+        ⚠️ allow_fallback=False。拒否時フォールバックは Opus / Fable 系専用で、
+           Haiku に付けると 400 になる:
+           'claude-haiku-4-5' does not support the `fallbacks` parameter.
+           要約が毎回失敗し、メンターが生ログを読まされる事故になった。
         """
         return await self._create(
             model=self._config.anthropic_summary_model,
@@ -83,6 +90,7 @@ class ClaudeClient:
             max_tokens=self._config.summary_max_tokens,
             effort=None,
             cache_system=False,
+            allow_fallback=False,
         )
 
     async def _create(
@@ -95,6 +103,7 @@ class ClaudeClient:
         effort: str | None,
         cache_system: bool,
         return_usage: bool = False,
+        allow_fallback: bool = False,
     ) -> Any:
         system: Any = system_prompt
         if cache_system:
@@ -118,7 +127,7 @@ class ClaudeClient:
             kwargs["output_config"] = {"effort": effort}
 
         try:
-            if self._config.anthropic_fallback_model:
+            if allow_fallback and self._config.anthropic_fallback_model:
                 # 安全上の判断で応答が拒否された場合に、同一リクエスト内で
                 # 別モデルに引き継がせる。無言で止まるのを防ぐための保険。
                 response = await self._client.beta.messages.create(
@@ -135,7 +144,7 @@ class ClaudeClient:
         except anthropic.BadRequestError as exc:
             # 400 はリクエストの組み立てミス。原因が分からないと直せないので本文を残す。
             hint = ""
-            if self._config.anthropic_fallback_model:
+            if allow_fallback and self._config.anthropic_fallback_model:
                 hint = (
                     " / ANTHROPIC_FALLBACK_MODEL を空にすると"
                     "拒否時フォールバック(ベータ機能)を無効化できます"

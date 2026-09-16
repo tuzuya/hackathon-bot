@@ -223,6 +223,37 @@ class Checker(discord.Client):
             self._check_permissions(channel, TEXT_PERMISSIONS, indent="   ")  # type: ignore[arg-type]
         print()
 
+    def _check_mentionable(self, role: discord.Role) -> None:
+        """Bot がこのロールに「赤い通知」を飛ばせるかを確認する。
+
+        allowed_mentions でロール ID を指定しても、それだけでは通知は飛ばない。
+        Discord 側で以下のどちらかが必要:
+          - ロールが「誰でもメンションできる」設定になっている
+          - Bot が「@everyone、@here、全ロールにメンション」権限を持っている
+        どちらも無いと、見た目はメンションだが通知が飛ばない状態になり、
+        メンターが気付けない。
+        """
+        if role.mentionable:
+            print(f"   {OK} このロールは誰でもメンションできる設定(通知が飛びます)")
+            return
+
+        me = role.guild.me
+        can_mention_all = me is not None and me.guild_permissions.mention_everyone
+        if can_mention_all:
+            print(f"   {OK} Bot が全ロールへのメンション権限を持っています(通知が飛びます)")
+            return
+
+        self._fail(
+            f"@{role.name} に通知が飛びません。"
+            "ロールが「メンション可能」でなく、Bot にも全ロールへのメンション権限がありません"
+        )
+        print("      直し方(どちらか一方):")
+        print(f"      A. サーバー設定 → ロール → {role.name} → "
+              "「誰でもこの役職にメンションできるようにする」を ON(推奨)")
+        print("      B. Bot のロールに「@everyone、@here、全ロールにメンション」権限を付与")
+        print("      ※ A のほうが影響範囲が狭い。B でも Bot は @everyone を送りません")
+        print("        (コード側で everyone=False を常に指定しているため)")
+
     def _check_role(self) -> None:
         print("── エンジニアメンターロール ──")
         role_id = self.config.engineer_mentor_role_id
@@ -235,6 +266,7 @@ class Checker(discord.Client):
             if role is None:
                 continue
             print(f"{OK} ロール名: @{role.name}")
+            self._check_mentionable(role)
             if self.intents.members:
                 print(f"   付与されている人数: {len(role.members)}")
             else:
