@@ -1,0 +1,5 @@
+# バージョンは固定する(ハッカソン当日に上流の更新で壊れる事故を防ぐため)
+discord.py==2.7.1
+anthropic==1.6.0
+aiosqlite==0.22.1
+python-dotenv==1.2.3

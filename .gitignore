@@ -1,0 +1,22 @@
+# シークレット(絶対にコミットしない)
+.env
+.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# SQLite(ローカル開発用。本番は Railway の Volume 配下)
+*.db
+*.db-journal
+*.sqlite3
+data/
+
+# エディタ / OS
+.vscode/
+.idea/
+.DS_Store
+compare_results.md
