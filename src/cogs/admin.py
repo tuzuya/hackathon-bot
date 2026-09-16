@@ -13,8 +13,10 @@ from discord.ext import commands
 
 from src import messages
 from src.config import Config
+from src.guide import ConfirmView
 from src.knowledge.manager import KnowledgeManager
 from src.knowledge.store import CATEGORIES, SOURCE_MANUAL, KnowledgeStore
+from src.scope import ForumScope
 from src.usage import UsageStore
 
 logger = logging.getLogger(__name__)
@@ -164,6 +166,34 @@ class AdminCog(commands.Cog):
         await self._reload_prompt()
         await interaction.response.send_message(
             messages.KNOWLEDGE_REMOVED.format(entry_id=entry_id), ephemeral=True
+        )
+
+    # --- /post-guide ------------------------------------------------------
+
+    @app_commands.command(
+        name="post-guide",
+        description="各チームの相談室に使い方の案内を投稿する(エンジニアメンター限定)",
+    )
+    async def post_guide(self, interaction: discord.Interaction) -> None:
+        if await self._deny_if_not_mentor(interaction):
+            return
+
+        scope = ForumScope(
+            channel_ids=self.config.forum_channel_ids,
+            channel_name=self.config.forum_channel_name,
+        )
+        forums = scope.resolve_forums(self.bot.guilds)
+        if not forums:
+            await interaction.response.send_message(
+                messages.GUIDE_NO_FORUM, ephemeral=True
+            )
+            return
+
+        mention = self.bot.user.mention if self.bot.user else "@bot"
+        await interaction.response.send_message(
+            messages.GUIDE_CONFIRM.format(count=len(forums)),
+            view=ConfirmView(forums, mention),
+            ephemeral=True,
         )
 
     # --- /stats -----------------------------------------------------------

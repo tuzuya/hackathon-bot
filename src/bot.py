@@ -30,6 +30,7 @@ INITIAL_EXTENSIONS: tuple[str, ...] = (
     "src.cogs.mention",
     "src.cogs.escalation",
     "src.cogs.admin",
+    "src.cogs.health",
 )
 
 
