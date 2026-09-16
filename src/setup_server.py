@@ -44,6 +44,7 @@ class Plan:
     """実行前に何が起きるかを見せるための記録。"""
 
     created: list[str] = field(default_factory=list)
+    granted: list[str] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
     failed: list[str] = field(default_factory=list)
 
@@ -53,6 +54,11 @@ class Plan:
         if self.created:
             print(f"{verb}もの ({len(self.created)} 件):")
             for item in self.created:
+                print(f"  {OK} {item}")
+        if self.granted:
+            verb2 = "追加した" if applied else "追加する"
+            print(f"\n{verb2}権限 ({len(self.granted)} 件):")
+            for item in self.granted:
                 print(f"  {OK} {item}")
         if self.skipped:
             print(f"\nすでに存在するため飛ばすもの ({len(self.skipped)} 件):")
@@ -66,11 +72,10 @@ class Plan:
                 print(f"  {NG} {item}")
 
 
-def team_names(args: argparse.Namespace) -> list[str]:
-    """チーム名の一覧を決める。
-
-    teams.txt があればそれを使い、無ければ --count と --format から生成する。
-    """
+def team_names_from_args(args: argparse.Namespace) -> list[str] | None:
+    """明示的に指定されたチーム名の一覧。既存カテゴリから拾う場合は None。"""
+    if args.from_categories:
+        return None
     if args.teams_file:
         path = Path(args.teams_file)
         if not path.is_file():
@@ -120,12 +125,13 @@ class Builder(discord.Client):
         if guild is None:
             return
 
-        teams = team_names(self.args)
+        categories = self._resolve_team_categories(guild)
         mode = "実行" if self.args.apply else "確認のみ(dry-run)"
         print(f"\nサーバー: {guild.name}")
         print(f"モード  : {mode}")
-        print(f"チーム  : {len(teams)} 件 — {', '.join(teams[:5])}"
-              f"{' ...' if len(teams) > 5 else ''}")
+        print(f"チーム  : {len(categories)} 件 — "
+              f"{', '.join(c.name if c else '?' for c in categories[:5])}"
+              f"{' ...' if len(categories) > 5 else ''}")
         print(f"相談室名: {self.config.forum_channel_name}")
         print(f"タグ名  : {self.config.needs_attention_tag_name}\n")
 
@@ -133,13 +139,39 @@ class Builder(discord.Client):
         engineer_role = await self._ensure_engineer_role(guild)
         await self._ensure_mentor_role(guild)
         await self._ensure_mentor_area(guild, engineer_role)
-        await self._ensure_teams(guild, teams)
+        await self._ensure_teams(guild, categories, engineer_role)
 
         self.plan.report(applied=self.args.apply)
         self._print_env()
 
         if not self.args.apply:
             print("\n実際に作成するには --apply を付けて実行してください。")
+
+    def _resolve_team_categories(
+        self, guild: discord.Guild
+    ) -> list[discord.CategoryChannel | str]:
+        """対象となるチームのカテゴリを決める。
+
+        --from-categories なら、サーバーに既にあるカテゴリをそのまま使う。
+        名前を手で指定する方式は、表記ゆれ(末尾の空白、絵文字など)があると
+        既存カテゴリを見つけられず、**同名のカテゴリを新規作成してしまう**。
+        既にカテゴリが用意されているなら、こちらのほうが安全。
+        """
+        excluded = {MENTOR_CATEGORY, *(self.args.exclude or [])}
+
+        if self.args.from_categories:
+            found = [c for c in guild.categories if c.name not in excluded]
+            if not found:
+                print(f"{NG} カテゴリが 1 つも見つかりません")
+            return found  # type: ignore[return-value]
+
+        names = team_names_from_args(self.args)
+        assert names is not None
+        resolved: list[discord.CategoryChannel | str] = []
+        for name in names:
+            existing = discord.utils.get(guild.categories, name=name)
+            resolved.append(existing if existing is not None else name)
+        return resolved
 
     # --- ロール ------------------------------------------------------------
 
@@ -259,14 +291,21 @@ class Builder(discord.Client):
 
     # --- チーム -------------------------------------------------------------
 
-    async def _ensure_teams(self, guild: discord.Guild, teams: list[str]) -> None:
+    async def _ensure_teams(
+        self,
+        guild: discord.Guild,
+        categories: list,
+        engineer_role: discord.Role | None,
+    ) -> None:
         forum_name = self.config.forum_channel_name
         tag_name = self.config.needs_attention_tag_name
 
-        for team in teams:
-            category = discord.utils.get(guild.categories, name=team)
-            if category is None:
+        for entry in categories:
+            if isinstance(entry, str):
+                # カテゴリが存在しないので作る
+                team = entry
                 self.plan.created.append(f"カテゴリ「{team}」")
+                category = None
                 if self.args.apply:
                     try:
                         category = await guild.create_category(
@@ -276,13 +315,21 @@ class Builder(discord.Client):
                         self.plan.failed.append(f"カテゴリ {team}: {exc}")
                         continue
             else:
-                self.plan.skipped.append(f"カテゴリ「{team}」")
+                category = entry
+                team = category.name
+
+            if category is None:
+                continue
+
+            # ⚠️ 先に権限を直す。カテゴリが @everyone を閉じていると、
+            #    フォーラムを作っても Bot とメンターから見えない
+            await self._grant_access(category, engineer_role)
 
             existing = next(
                 (
                     c
                     for c in guild.forums
-                    if c.name == forum_name and c.category == category
+                    if c.name == forum_name and c.category_id == category.id
                 ),
                 None,
             )
@@ -298,10 +345,11 @@ class Builder(discord.Client):
                 continue
 
             self.plan.created.append(f"{team} / {forum_name}(「{tag_name}」タグつき)")
-            if not self.args.apply or category is None:
+            if not self.args.apply:
                 continue
             try:
-                # タグはチャンネル作成時に一緒に作れる
+                # overwrites を渡さないので、カテゴリの権限をそのまま引き継ぐ。
+                # チームごとの公開範囲は、既存のカテゴリ設定に従う
                 await guild.create_forum(
                     name=forum_name,
                     category=category,
@@ -310,6 +358,59 @@ class Builder(discord.Client):
                 )
             except discord.HTTPException as exc:
                 self.plan.failed.append(f"{team} のフォーラム: {exc}")
+
+    async def _grant_access(
+        self,
+        category: discord.CategoryChannel,
+        engineer_role: discord.Role | None,
+    ) -> None:
+        """Bot とエンジニアメンターが、このカテゴリを使えるようにする。
+
+        ⚠️ **足りない権限だけを足す。**既存の設定には手を加えない。
+           カテゴリが @everyone を閉じている場合、Bot も締め出される。
+           そのままフォーラムを作ると、Bot は質問に気づけず、
+           エスカレーション通知も無言で失敗する(テスト環境で実際に踏んだ)。
+
+           メンターも同様で、見えなければ呼ばれても駆けつけられない。
+        """
+        guild = category.guild
+        needed: dict = {}
+
+        me = guild.me
+        if me is not None and not category.permissions_for(me).view_channel:
+            needed[me] = discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                send_messages_in_threads=True,
+                read_message_history=True,
+                embed_links=True,
+                attach_files=True,
+                add_reactions=True,
+                manage_threads=True,
+            )
+            self.plan.granted.append(f"{category.name}: Bot に閲覧・投稿権限")
+
+        if engineer_role is not None:
+            if not category.permissions_for(engineer_role).view_channel:
+                needed[engineer_role] = discord.PermissionOverwrite(
+                    view_channel=True,
+                    send_messages=True,
+                    send_messages_in_threads=True,
+                    read_message_history=True,
+                )
+                self.plan.granted.append(
+                    f"{category.name}: @{ENGINEER_MENTOR_ROLE} に閲覧・投稿権限"
+                )
+
+        if not needed or not self.args.apply:
+            return
+        try:
+            for target, overwrite in needed.items():
+                await category.set_permissions(
+                    target, overwrite=overwrite, reason="ハッカソン Bot のセットアップ"
+                )
+        except discord.HTTPException as exc:
+            self.plan.failed.append(f"{category.name} の権限設定: {exc}")
 
     def _team_overwrites(self, guild: discord.Guild, team: str) -> dict | None:
         """--private-teams のときだけ、チーム外から見えないようにする。
@@ -359,6 +460,15 @@ def parse_args() -> argparse.Namespace:
         "--apply", action="store_true",
         help="実際に作成する(付けない場合は何をするか表示するだけ)",
     )
+    parser.add_argument(
+        "--from-categories", action="store_true",
+        help="サーバーに既にあるカテゴリをチームとして使う。"
+             "すでに 1班〜22班 のカテゴリがある場合はこちらを使う(推奨)",
+    )
+    parser.add_argument(
+        "--exclude", nargs="*", default=[],
+        help="--from-categories のときに対象から外すカテゴリ名(複数指定可)",
+    )
     parser.add_argument("--count", type=int, default=22, help="チーム数(既定 22)")
     parser.add_argument(
         "--format", default="{n}班",
@@ -371,7 +481,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--guild", type=int, help="対象サーバーの ID")
     parser.add_argument(
         "--private-teams", action="store_true",
-        help="各チームのカテゴリを、同名のロールを持つ人だけに見せる",
+        help="カテゴリを新規作成する場合に、同名のロールを持つ人だけに見せる。"
+             "既存カテゴリの公開範囲は変更しない",
     )
     return parser.parse_args()
 

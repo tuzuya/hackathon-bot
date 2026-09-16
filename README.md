@@ -39,12 +39,15 @@ cp .env.example .env               # 値を埋める
 ## 本番サーバーの構築
 
 ```bash
-python -m src.setup_server --count 22 --format "{n}班"          # 確認のみ
-python -m src.setup_server --count 22 --format "{n}班" --apply  # 実行
+python -m src.setup_server --from-categories          # 確認のみ
+python -m src.setup_server --from-categories --apply  # 実行
 ```
 
-22 チーム分のカテゴリ・フォーラム・タグ・ロール・メンター用チャンネルを一括で作る。
-**既定は dry-run**で、`--apply` を付けたときだけ作成する。既にあるものは飛ばす。
+既にある 22 チーム分のカテゴリの中にフォーラムとタグを作り、
+メンター用のカテゴリ・チャンネル・ロールを用意する。
+Bot とエンジニアメンターの閲覧権限が足りなければ、**足りない分だけ**追加する。
+
+**既定は dry-run**で、`--apply` を付けたときだけ実行する。既にあるものは飛ばす。
 
 ## 設定の診断(起動前に実行する)
 
