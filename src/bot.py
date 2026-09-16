@@ -162,6 +162,26 @@ class HackathonBot(commands.Bot):
         """
         return
 
+    @property
+    def target_guilds(self) -> list[discord.Guild]:
+        """Bot が動作するサーバー。
+
+        GUILD_ID を設定していればそこだけ。未設定なら参加している全サーバー。
+        テスト用と本番で同じ Bot を使うときに、
+        テスト側の質問に応答したりキューへ飛ばしたりしないためのもの。
+        """
+        if self.config.guild_id is None:
+            return list(self.guilds)
+        guild = self.get_guild(self.config.guild_id)
+        return [guild] if guild is not None else []
+
+    def is_target_guild(self, guild: discord.Guild | None) -> bool:
+        if guild is None:
+            return False
+        if self.config.guild_id is None:
+            return True
+        return guild.id == self.config.guild_id
+
     async def on_ready(self) -> None:
         logger.info("ログインしました: %s (id=%s)", self.user, getattr(self.user, "id", "?"))
         self._report_scope()
@@ -172,7 +192,7 @@ class HackathonBot(commands.Bot):
 
         ギルド単位の同期は即座に反映される(グローバルは最大 1 時間かかる)。
         """
-        for guild in self.guilds:
+        for guild in self.target_guilds:
             try:
                 self.tree.copy_global_to(guild=guild)
                 synced = await self.tree.sync(guild=guild)
@@ -194,7 +214,18 @@ class HackathonBot(commands.Bot):
             channel_ids=self.config.forum_channel_ids,
             channel_name=self.config.forum_channel_name,
         )
-        forums = scope.resolve_forums(self.guilds)
+        forums = scope.resolve_forums(self.target_guilds)
+        if self.config.guild_id is None:
+            logger.warning(
+                "GUILD_ID が未設定です。参加している全サーバー(%d 件)で動作します。"
+                "テスト用と本番で同じ Bot を使う場合は GUILD_ID を設定してください",
+                len(self.guilds),
+            )
+        else:
+            logger.info(
+                "対象サーバー: %s",
+                ", ".join(g.name for g in self.target_guilds) or "(見つかりません)",
+            )
         logger.info("動作範囲: %s", scope.describe())
         if not forums:
             logger.error(

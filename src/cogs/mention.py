@@ -74,6 +74,10 @@ class MentionCog(commands.Cog):
         # DM には反応しない
         if message.guild is None:
             return
+        # 対象外のサーバー(テスト用サーバーなど)では完全に沈黙する。
+        # 誘導メッセージすら出さない。そこは Bot の持ち場ではない
+        if not self.bot.is_target_guild(message.guild):  # type: ignore[attr-defined]
+            return
         if not self._mentions_bot(message):
             return
 

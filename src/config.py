@@ -88,6 +88,11 @@ class Config:
 
     # --- 段階1で必須 ---
     discord_token: str
+    # 動作対象のサーバー。未設定なら参加している全サーバーで動く。
+    # ⚠️ テスト用と本番で同じ Bot を使う場合は必ず設定すること。
+    #    設定しないと、テストサーバーの質問にも応答し、
+    #    エスカレーションが本番のキューへ飛ぶ。
+    guild_id: int | None
     # ID を明示した場合はそちらが優先される。未設定なら名前で判定する
     # (22 チーム分の ID を手で並べるのは現実的でないため)
     forum_channel_ids: frozenset[int]
@@ -128,6 +133,7 @@ class Config:
     def load(cls) -> Config:
         return cls(
             discord_token=_require("DISCORD_TOKEN"),
+            guild_id=_optional_int("GUILD_ID"),
             forum_channel_ids=frozenset(_optional_int_list("FORUM_CHANNEL_IDS")),
             forum_channel_name=_get("FORUM_CHANNEL_NAME") or "エンジニア相談室",
             anthropic_api_key=_get("ANTHROPIC_API_KEY"),

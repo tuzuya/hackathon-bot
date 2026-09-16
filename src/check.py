@@ -52,6 +52,13 @@ class Checker(discord.Client):
         self.config = config
         self.problems = 0
 
+    @property
+    def target_guilds(self) -> list[discord.Guild]:
+        if self.config.guild_id is None:
+            return list(self.guilds)
+        guild = self.get_guild(self.config.guild_id)
+        return [guild] if guild is not None else []
+
     def _fail(self, message: str) -> None:
         self.problems += 1
         print(f"{NG} {message}")
@@ -64,7 +71,23 @@ class Checker(discord.Client):
 
     def _run_checks(self) -> None:
         print(f"\n{OK} ログイン成功: {self.user}")
-        print(f"   参加サーバー: {', '.join(g.name for g in self.guilds) or '(なし)'}\n")
+        print(f"   参加サーバー: {', '.join(g.name for g in self.guilds) or '(なし)'}")
+        if self.config.guild_id is None:
+            if len(self.guilds) > 1:
+                self._fail(
+                    "GUILD_ID が未設定で、複数のサーバーに参加しています。"
+                    "テスト側の質問にも応答し、エスカレーションが本番のキューへ飛びます"
+                )
+                print("      対象サーバーの ID を GUILD_ID に設定してください:")
+                for guild in self.guilds:
+                    print(f"        GUILD_ID={guild.id}   ({guild.name})")
+        else:
+            names = [g.name for g in self.target_guilds]
+            if names:
+                print(f"   動作対象  : {names[0]}")
+            else:
+                self._fail(f"GUILD_ID={self.config.guild_id} のサーバーが見つかりません")
+        print()
 
         self._check_message_content_intent()
         forums = self._check_forums()
@@ -91,7 +114,7 @@ class Checker(discord.Client):
             channel_name=self.config.forum_channel_name,
         )
         print(f"── 対象フォーラム({scope.describe()}) ──")
-        forums = scope.resolve_forums(self.guilds)
+        forums = scope.resolve_forums(self.target_guilds)
 
         if not forums:
             self._fail(
@@ -114,7 +137,7 @@ class Checker(discord.Client):
         """名前が一致しなかったとき、実在するフォーラム名を出して比較できるようにする。"""
         print("   サーバー内のフォーラムチャンネル一覧:")
         found = False
-        for guild in self.guilds:
+        for guild in self.target_guilds:
             for channel in guild.channels:
                 if isinstance(channel, discord.ForumChannel):
                     found = True
@@ -261,7 +284,7 @@ class Checker(discord.Client):
             print(f"{WARN}ENGINEER_MENTOR_ROLE_ID が未設定(段階4以降で必要)")
             print()
             return
-        for guild in self.guilds:
+        for guild in self.target_guilds:
             role = guild.get_role(role_id)
             if role is None:
                 continue

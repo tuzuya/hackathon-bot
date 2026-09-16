@@ -99,11 +99,18 @@ class Builder(discord.Client):
             await self.close()
 
     def _guild(self) -> discord.Guild | None:
-        if self.args.guild:
-            return self.get_guild(self.args.guild)
+        # 優先順: --guild > .env の GUILD_ID > 参加サーバーが1つならそれ
+        target = self.args.guild or self.config.guild_id
+        if target:
+            guild = self.get_guild(target)
+            if guild is None:
+                print(f"{NG} ID {target} のサーバーが見つかりません"
+                      "(Bot が招待されていますか?)")
+            return guild
         if len(self.guilds) == 1:
             return self.guilds[0]
-        print(f"{NG} 複数のサーバーに参加しています。--guild で ID を指定してください:")
+        print(f"{NG} 複数のサーバーに参加しています。"
+              "--guild で ID を指定するか、.env に GUILD_ID を設定してください:")
         for guild in self.guilds:
             print(f"     {guild.id}  {guild.name}")
         return None
@@ -122,6 +129,7 @@ class Builder(discord.Client):
         print(f"相談室名: {self.config.forum_channel_name}")
         print(f"タグ名  : {self.config.needs_attention_tag_name}\n")
 
+        self.results["GUILD_ID"] = guild.id
         engineer_role = await self._ensure_engineer_role(guild)
         await self._ensure_mentor_role(guild)
         await self._ensure_mentor_area(guild, engineer_role)
@@ -335,6 +343,7 @@ class Builder(discord.Client):
         if not self.results:
             return
         print(f"\n{'=' * 60}\n.env に設定する値:\n")
+        print(f"GUILD_ID={self.results.get('GUILD_ID', '')}")
         for key in ("ENGINEER_MENTOR_ROLE_ID", "MENTOR_QUEUE_CHANNEL_ID", "ADMIN_CHANNEL_ID"):
             if key in self.results:
                 print(f"{key}={self.results[key]}")

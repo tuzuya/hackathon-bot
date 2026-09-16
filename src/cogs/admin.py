@@ -182,7 +182,7 @@ class AdminCog(commands.Cog):
             channel_ids=self.config.forum_channel_ids,
             channel_name=self.config.forum_channel_name,
         )
-        forums = scope.resolve_forums(self.bot.guilds)
+        forums = scope.resolve_forums(self.bot.target_guilds)  # type: ignore[attr-defined]
         if not forums:
             await interaction.response.send_message(
                 messages.GUIDE_NO_FORUM, ephemeral=True
