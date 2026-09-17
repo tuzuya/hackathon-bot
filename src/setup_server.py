@@ -357,6 +357,11 @@ class Builder(discord.Client):
             if category is None:
                 continue
 
+            # 権限はカテゴリに付ける。フォーラムはそれを引き継ぐ。
+            # フォーラム個別に付けるとカテゴリとの同期が切れ、
+            # 後から班のカテゴリ権限を変えても相談室に反映されなくなる
+            await self._grant_access(category, engineer_role)
+
             existing = next(
                 (
                     c
@@ -367,7 +372,6 @@ class Builder(discord.Client):
             )
             if existing is not None:
                 self.plan.skipped.append(f"{team} / {forum_name}")
-                await self._grant_access(existing, engineer_role)
                 if not any(t.name == tag_name for t in existing.available_tags):
                     self.plan.created.append(f"{team} / 「{tag_name}」タグ")
                     if self.args.apply:
@@ -378,16 +382,16 @@ class Builder(discord.Client):
                 continue
 
             self.plan.created.append(f"{team} / {forum_name}(「{tag_name}」タグつき)")
-            self._plan_forum_access(category, engineer_role)
             if not self.args.apply:
                 continue
             try:
+                # overwrites を渡さないので、カテゴリの権限をそのまま引き継ぐ。
+                # チームごとの公開範囲は既存のカテゴリ設定に従う
                 await guild.create_forum(
                     name=forum_name,
                     category=category,
                     available_tags=[discord.ForumTag(name=tag_name)],
                     topic=f"{team} の質問はここへ。投稿を作って Bot を呼んでください。",
-                    overwrites=self._forum_overwrites(category, engineer_role),
                 )
             except discord.HTTPException as exc:
                 self.plan.failed.append(f"{team} のフォーラム: {exc}")
@@ -397,12 +401,7 @@ class Builder(discord.Client):
         channel: discord.abc.GuildChannel,
         engineer_role: discord.Role | None,
     ) -> dict:
-        """Bot とエンジニアメンターのうち、そのチャンネルを見られない相手を返す。
-
-        ⚠️ 権限は **フォーラムにだけ** 付ける。カテゴリに付けてはいけない。
-           カテゴリに付けると、チームの私的なチャットチャンネルまで
-           Bot とメンターから見えてしまう。相談室だけ見えれば足りる。
-        """
+        """Bot とエンジニアメンターのうち、そのカテゴリを見られない相手を返す。"""
         guild = channel.guild
         needed: dict = {}
 
@@ -430,56 +429,38 @@ class Builder(discord.Client):
             )
         return needed
 
-    def _forum_overwrites(
-        self,
-        category: discord.CategoryChannel,
-        engineer_role: discord.Role | None,
-    ) -> dict:
-        """新しく作るフォーラムの権限。
-
-        カテゴリの設定をそのまま引き継いだうえで、Bot とメンターを足す。
-        引き継がないと、チームのメンバーが自分の相談室を見られなくなる。
-        """
-        overwrites = dict(category.overwrites)
-        overwrites.update(self._access_targets(category, engineer_role))
-        return overwrites
-
-    def _plan_forum_access(
-        self,
-        category: discord.CategoryChannel,
-        engineer_role: discord.Role | None,
-    ) -> None:
-        """dry-run 用。カテゴリの権限から、フォーラムで何を足すことになるか予測する。"""
-        for target in self._access_targets(category, engineer_role):
-            name = getattr(target, "name", str(target))
-            self.plan.granted.append(f"{category.name} / {self.config.forum_channel_name}: {name}")
-
     async def _grant_access(
         self,
-        forum: discord.ForumChannel,
+        category: discord.CategoryChannel,
         engineer_role: discord.Role | None,
     ) -> None:
-        """既存フォーラムに、足りない権限だけを足す。
+        """Bot とエンジニアメンターが、このカテゴリを使えるようにする。
 
-        ⚠️ **足りない分だけ。**既存の公開範囲には手を加えない。
-           フォーラムが見えないと、Bot は質問に気づけず、
-           メンターは呼ばれても駆けつけられない。
+        ⚠️ **足りない権限だけを足す。**既存の設定には手を加えない。
+           カテゴリが @everyone を閉じていると Bot も締め出され、
+           質問に気づけず、エスカレーション通知も無言で失敗する
+           (テスト環境で実際に踏んだ)。
+           メンターも見えなければ、呼ばれても駆けつけられない。
+
+        なお、ここで付けるのは **閲覧・投稿の権限** であって、
+        Bot の通知が飛ぶ相手とは無関係。通知先は allowed_mentions で
+        エンジニアメンターのロール ID だけを明示指定している。
         """
-        needed = self._access_targets(forum, engineer_role)
+        needed = self._access_targets(category, engineer_role)
         if not needed:
             return
         for target in needed:
             name = getattr(target, "name", str(target))
-            self.plan.granted.append(f"{forum.name}({forum.category}): {name}")
+            self.plan.granted.append(f"{category.name}: {name} に閲覧・投稿権限")
         if not self.args.apply:
             return
         try:
             for target, overwrite in needed.items():
-                await forum.set_permissions(
+                await category.set_permissions(
                     target, overwrite=overwrite, reason="ハッカソン Bot のセットアップ"
                 )
         except discord.HTTPException as exc:
-            self.plan.failed.append(f"{forum.name} の権限設定: {exc}")
+            self.plan.failed.append(f"{category.name} の権限設定: {exc}")
 
     def _team_overwrites(self, guild: discord.Guild, team: str) -> dict | None:
         """--private-teams のときだけ、チーム外から見えないようにする。

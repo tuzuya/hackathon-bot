@@ -101,11 +101,16 @@ class ResolveCategoriesTest(unittest.TestCase):
         self.assertEqual(resolved[0], "1班")  # 文字列 = 新規作成扱いになる
 
 
-class ForumAccessTest(unittest.IsolatedAsyncioTestCase):
-    """権限はフォーラムにだけ付ける。
+class GrantAccessTest(unittest.IsolatedAsyncioTestCase):
+    """Bot とエンジニアメンターの閲覧権限。
 
-    カテゴリに付けると、チームの私的なチャットチャンネルまで
-    Bot とメンターから見えてしまう。相談室だけ見えれば足りる。
+    カテゴリが @everyone を閉じていると Bot も締め出され、
+    質問に気づけず、エスカレーション通知も無言で失敗する。
+    メンターも見えなければ、呼ばれても駆けつけられない。
+
+    ⚠️ ここで付けるのは閲覧・投稿の権限であって、通知先とは無関係。
+       Bot の通知先は allowed_mentions でロールIDを明示指定している
+       (test_mentions.py を参照)。
     """
 
     def _role(self) -> MagicMock:
@@ -114,88 +119,37 @@ class ForumAccessTest(unittest.IsolatedAsyncioTestCase):
         role._is_bot = False
         return role
 
-    def _forum(self, *, bot_can_view: bool, mentor_can_view: bool) -> MagicMock:
-        forum = MagicMock(spec=discord.ForumChannel)
-        forum.name = "エンジニア相談室"
-        forum.category = "1班"
-        forum.set_permissions = AsyncMock()
-
-        def permissions_for(target):
-            perms = MagicMock()
-            perms.view_channel = (
-                bot_can_view if getattr(target, "_is_bot", False) else mentor_can_view
-            )
-            return perms
-
-        forum.permissions_for = permissions_for
-        guild = MagicMock(spec=discord.Guild)
-        me = MagicMock()
-        me._is_bot = True
-        guild.me = me
-        forum.guild = guild
-        return forum
-
-    async def test_見えていれば何もしない(self) -> None:
-        forum = self._forum(bot_can_view=True, mentor_can_view=True)
+    async def test_権限が足りていれば何もしない(self) -> None:
+        category = _category("1班", bot_can_view=True, mentor_can_view=True)
+        _guild([category])
         builder = _builder(apply=True)
-        await builder._grant_access(forum, self._role())
+        await builder._grant_access(category, self._role())
         self.assertEqual(builder.plan.granted, [])
-        forum.set_permissions.assert_not_awaited()
+        category.set_permissions.assert_not_awaited()
 
-    async def test_Botが見えないなら足す(self) -> None:
-        forum = self._forum(bot_can_view=False, mentor_can_view=True)
+    async def test_Botが見えないなら権限を足す(self) -> None:
+        category = _category("1班", bot_can_view=False, mentor_can_view=True)
+        _guild([category])
         builder = _builder(apply=True)
-        await builder._grant_access(forum, self._role())
+        await builder._grant_access(category, self._role())
         self.assertEqual(len(builder.plan.granted), 1)
-        forum.set_permissions.assert_awaited_once()
+        category.set_permissions.assert_awaited_once()
 
-    async def test_メンターが見えないなら足す(self) -> None:
-        forum = self._forum(bot_can_view=True, mentor_can_view=False)
+    async def test_メンターが見えないなら権限を足す(self) -> None:
+        category = _category("1班", bot_can_view=True, mentor_can_view=False)
+        _guild([category])
         builder = _builder(apply=True)
-        await builder._grant_access(forum, self._role())
+        await builder._grant_access(category, self._role())
         self.assertEqual(len(builder.plan.granted), 1)
         self.assertIn(ENGINEER_MENTOR_ROLE, builder.plan.granted[0])
 
-    async def test_dry_runでは変更しない(self) -> None:
-        forum = self._forum(bot_can_view=False, mentor_can_view=False)
+    async def test_dry_runでは実際に変更しない(self) -> None:
+        category = _category("1班", bot_can_view=False, mentor_can_view=False)
+        _guild([category])
         builder = _builder(apply=False)
-        await builder._grant_access(forum, self._role())
+        await builder._grant_access(category, self._role())
         self.assertEqual(len(builder.plan.granted), 2)
-        forum.set_permissions.assert_not_awaited()
-
-
-class ForumOverwritesTest(unittest.TestCase):
-    """新規フォーラムは、カテゴリの権限を引き継いだうえで Bot/メンターを足す。
-
-    引き継がないと、チームのメンバーが自分の相談室を見られなくなる。
-    """
-
-    def test_カテゴリの権限を引き継ぐ(self) -> None:
-        team_role = MagicMock(spec=discord.Role)
-        team_role.name = "1班"
-        team_role._is_bot = False
-        category = _category("1班", bot_can_view=False, mentor_can_view=False)
-        category.overwrites = {team_role: discord.PermissionOverwrite(view_channel=True)}
-        _guild([category])
-
-        builder = _builder()
-        mentor = MagicMock(spec=discord.Role)
-        mentor.name = ENGINEER_MENTOR_ROLE
-        mentor._is_bot = False
-
-        overwrites = builder._forum_overwrites(category, mentor)
-        # チームのロールが残っている
-        self.assertIn(team_role, overwrites)
-        # Bot とメンターが足されている
-        self.assertEqual(len(overwrites), 3)
-
-    def test_カテゴリ自体の権限は変更しない(self) -> None:
-        category = _category("1班", bot_can_view=False, mentor_can_view=False)
-        category.overwrites = {}
-        _guild([category])
-        builder = _builder()
-        builder._forum_overwrites(category, None)
-        category.set_permissions.assert_not_called()
+        category.set_permissions.assert_not_awaited()
 
 
 class PermissionPrecheckTest(unittest.TestCase):
