@@ -144,3 +144,39 @@ class GrantAccessTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PermissionPrecheckTest(unittest.TestCase):
+    """構築に必要な権限を、何かを作る前に確かめること。
+
+    22 チーム分の途中で 403 になると、どこまで進んだか分からなくなる。
+    """
+
+    def _guild_with(self, *, manage_channels: bool, manage_roles: bool):
+        guild = MagicMock(spec=discord.Guild)
+        me = MagicMock()
+        me.guild_permissions.manage_channels = manage_channels
+        me.guild_permissions.manage_roles = manage_roles
+        guild.me = me
+        return guild
+
+    def test_権限が揃っていれば通る(self) -> None:
+        builder = _builder()
+        guild = self._guild_with(manage_channels=True, manage_roles=True)
+        self.assertTrue(builder._check_permissions(guild))
+
+    def test_チャンネル管理がなければ止まる(self) -> None:
+        builder = _builder()
+        guild = self._guild_with(manage_channels=False, manage_roles=True)
+        self.assertFalse(builder._check_permissions(guild))
+
+    def test_ロール管理がなければ止まる(self) -> None:
+        builder = _builder()
+        guild = self._guild_with(manage_channels=True, manage_roles=False)
+        self.assertFalse(builder._check_permissions(guild))
+
+    def test_メンバー情報が取れなければ止まる(self) -> None:
+        builder = _builder()
+        guild = MagicMock(spec=discord.Guild)
+        guild.me = None
+        self.assertFalse(builder._check_permissions(guild))

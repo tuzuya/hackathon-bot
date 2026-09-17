@@ -136,6 +136,9 @@ class Builder(discord.Client):
         print(f"タグ名  : {self.config.needs_attention_tag_name}\n")
 
         self.results["GUILD_ID"] = guild.id
+        if not self._check_permissions(guild):
+            return
+
         engineer_role = await self._ensure_engineer_role(guild)
         await self._ensure_mentor_role(guild)
         await self._ensure_mentor_area(guild, engineer_role)
@@ -146,6 +149,35 @@ class Builder(discord.Client):
 
         if not self.args.apply:
             print("\n実際に作成するには --apply を付けて実行してください。")
+
+    def _check_permissions(self, guild: discord.Guild) -> bool:
+        """構築に必要な権限が Bot にあるかを先に確かめる。
+
+        22 チーム分の途中で 403 になると、どこまで進んだか分からなくなる。
+        何かを作る前に止めたほうが後始末が楽。
+        """
+        me = guild.me
+        if me is None:
+            print(f"{NG} Bot のメンバー情報を取得できません")
+            return False
+
+        perms = me.guild_permissions
+        required = {
+            "manage_channels": "チャンネルの管理(カテゴリ・フォーラムの作成に必要)",
+            "manage_roles": "ロールの管理(ロールの作成と権限設定に必要)",
+        }
+        missing = [label for attr, label in required.items() if not getattr(perms, attr)]
+        if not missing:
+            return True
+
+        print(f"{NG} Bot に必要な権限がありません:")
+        for label in missing:
+            print(f"     - {label}")
+        print()
+        print("   直し方: サーバー設定 → ロール → Bot のロール に権限を付ける。")
+        print("   または、管理者権限を持つ人に一時的に付与してもらう。")
+        print("   **構築が終わったらこの 2 つは外してよい。**")
+        return False
 
     def _resolve_team_categories(
         self, guild: discord.Guild
