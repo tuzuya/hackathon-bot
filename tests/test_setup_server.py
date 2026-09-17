@@ -38,6 +38,7 @@ def _guild(categories):
     guild.name = "本番"
     me = MagicMock()
     me._is_bot = True
+    me.guild_permissions.administrator = False
     guild.me = me
     for c in categories:
         c.guild = guild
@@ -234,3 +235,40 @@ class BotOverwriteTest(unittest.TestCase):
         guild.me = None
         builder = _builder()
         self.assertIsNotNone(builder._bot_overwrite(guild))
+
+
+class AdministratorTest(unittest.TestCase):
+    """管理者権限で構築したあと、それを外しても動き続けること。
+
+    ⚠️ 管理者はすべてのチャンネル制限を上書きするため、
+       permissions_for() は常に「見える」を返す。
+       それを信じて権限の追加を省くと、管理者を外した瞬間に
+       Bot は全カテゴリを見失って完全に動かなくなる。
+    """
+
+    def _member(self, *, administrator: bool):
+        me = MagicMock(spec=discord.Member)
+        me.guild_permissions.administrator = administrator
+        return me
+
+    def _channel(self, *, visible: bool):
+        channel = MagicMock(spec=discord.CategoryChannel)
+        perms = MagicMock()
+        perms.view_channel = visible
+        channel.permissions_for = lambda _target: perms
+        return channel
+
+    def test_管理者なら見えていても権限を書き込む(self) -> None:
+        me = self._member(administrator=True)
+        channel = self._channel(visible=True)  # 管理者なので常に見える
+        self.assertTrue(Builder._bot_needs_overwrite(me, channel))
+
+    def test_管理者でなく見えていれば書き込まない(self) -> None:
+        me = self._member(administrator=False)
+        channel = self._channel(visible=True)
+        self.assertFalse(Builder._bot_needs_overwrite(me, channel))
+
+    def test_管理者でなく見えなければ書き込む(self) -> None:
+        me = self._member(administrator=False)
+        channel = self._channel(visible=False)
+        self.assertTrue(Builder._bot_needs_overwrite(me, channel))

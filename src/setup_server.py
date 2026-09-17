@@ -142,6 +142,7 @@ class Builder(discord.Client):
         self.results["GUILD_ID"] = guild.id
         if not self._check_permissions(guild):
             return
+        self._note_administrator(guild)
 
         engineer_role = await self._ensure_engineer_role(guild)
         await self._ensure_mentor_role(guild)
@@ -154,6 +155,15 @@ class Builder(discord.Client):
 
         if not self.args.apply:
             print("\n実際に作成するには --apply を付けて実行してください。")
+
+    def _note_administrator(self, guild: discord.Guild) -> None:
+        me = guild.me
+        if me is None or not me.guild_permissions.administrator:
+            return
+        print("ℹ️  Bot に管理者権限が付いています。")
+        print("   構築後に外しても動き続けるよう、各カテゴリへ権限を明示的に書き込みます。")
+        print("   **構築が終わったら管理者権限は外してください。**")
+        print("   外したあと `python -m src.check` で確認できます。\n")
 
     def _check_permissions(self, guild: discord.Guild) -> bool:
         """構築に必要な権限が Bot にあるかを先に確かめる。
@@ -263,6 +273,23 @@ class Builder(discord.Client):
             self.plan.failed.append(f"ロール @{MENTOR_ROLE}: {exc}")
 
     # --- メンター用エリア ---------------------------------------------------
+
+    @staticmethod
+    def _bot_needs_overwrite(
+        me: discord.Member, channel: discord.abc.GuildChannel
+    ) -> bool:
+        """このチャンネルに、Bot 用の権限を明示的に書き込む必要があるか。
+
+        ⚠️ **管理者権限があるときは、必ず書き込む。**
+           管理者はすべてのチャンネル制限を上書きするため、
+           permissions_for() は常に「見える」を返す。
+           それを信じて権限の追加を省くと、構築後に管理者権限を外した瞬間、
+           Bot は全チームのカテゴリを見失って完全に動かなくなる。
+           構築時だけ管理者を付ける運用では、ここが致命傷になる。
+        """
+        if me.guild_permissions.administrator:
+            return True
+        return not channel.permissions_for(me).view_channel
 
     def _bot_overwrite(self, guild: discord.Guild) -> discord.PermissionOverwrite:
         """Bot 自身に与える権限。
@@ -429,7 +456,7 @@ class Builder(discord.Client):
         needed: dict = {}
 
         me = guild.me
-        if me is not None and not channel.permissions_for(me).view_channel:
+        if me is not None and self._bot_needs_overwrite(me, channel):
             needed[me] = self._bot_overwrite(guild)
 
         if engineer_role is not None and not channel.permissions_for(
