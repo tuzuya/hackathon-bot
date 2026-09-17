@@ -186,3 +186,51 @@ class PermissionPrecheckTest(unittest.TestCase):
         guild = MagicMock(spec=discord.Guild)
         guild.me = None
         self.assertFalse(builder._check_permissions(guild))
+
+
+class BotOverwriteTest(unittest.TestCase):
+    """Bot 自身に与える権限。
+
+    ⚠️ Bot が持っていない権限をチャンネル作成時に付与しようとすると
+       50013 Missing Permissions になる。実際に本番で踏んだ。
+    """
+
+    def _guild_with_perms(self, **perms):
+        guild = MagicMock(spec=discord.Guild)
+        me = MagicMock()
+        for name in (
+            "view_channel", "send_messages", "send_messages_in_threads",
+            "read_message_history", "embed_links", "attach_files",
+            "add_reactions", "manage_threads",
+        ):
+            setattr(me.guild_permissions, name, perms.get(name, True))
+        guild.me = me
+        return guild
+
+    def test_持っている権限だけを許可する(self) -> None:
+        guild = self._guild_with_perms(manage_threads=False, attach_files=False)
+        builder = _builder()
+        overwrite = builder._bot_overwrite(guild)
+        allowed, _denied = overwrite.pair()
+        self.assertTrue(allowed.view_channel)
+        # 持っていないものは含めない
+        self.assertFalse(allowed.manage_threads)
+        self.assertFalse(allowed.attach_files)
+
+    def test_何も持っていなければ空になる(self) -> None:
+        guild = self._guild_with_perms(**{
+            name: False for name in (
+                "view_channel", "send_messages", "send_messages_in_threads",
+                "read_message_history", "embed_links", "attach_files",
+                "add_reactions", "manage_threads",
+            )
+        })
+        builder = _builder()
+        allowed, _ = builder._bot_overwrite(guild).pair()
+        self.assertEqual(allowed.value, 0)
+
+    def test_メンバー情報が無くても落ちない(self) -> None:
+        guild = MagicMock(spec=discord.Guild)
+        guild.me = None
+        builder = _builder()
+        self.assertIsNotNone(builder._bot_overwrite(guild))

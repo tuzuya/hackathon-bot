@@ -149,6 +149,7 @@ class Builder(discord.Client):
         await self._ensure_teams(guild, categories, engineer_role)
 
         self.plan.report(applied=self.args.apply)
+        self._explain_failures()
         self._print_env()
 
         if not self.args.apply:
@@ -263,6 +264,34 @@ class Builder(discord.Client):
 
     # --- メンター用エリア ---------------------------------------------------
 
+    def _bot_overwrite(self, guild: discord.Guild) -> discord.PermissionOverwrite:
+        """Bot 自身に与える権限。
+
+        ⚠️ **Bot が自分で持っていない権限は付与できない**(50013 になる)。
+           チャンネル作成時の overwrites に含めるものは、
+           Bot のサーバー権限にあるものだけに絞る。
+        """
+        me = guild.me
+        wanted = (
+            "view_channel",
+            "send_messages",
+            "send_messages_in_threads",
+            "read_message_history",
+            "embed_links",
+            "attach_files",
+            "add_reactions",
+            "manage_threads",
+        )
+        overwrite = discord.PermissionOverwrite()
+        if me is None:
+            return overwrite
+        perms = me.guild_permissions
+        for name in wanted:
+            # 持っている権限だけを明示的に許可する
+            if getattr(perms, name, False):
+                setattr(overwrite, name, True)
+        return overwrite
+
     def _staff_overwrites(
         self, guild: discord.Guild, engineer_role: discord.Role | None
     ) -> dict:
@@ -280,13 +309,7 @@ class Builder(discord.Client):
                 view_channel=True, send_messages=True, read_message_history=True
             )
         if guild.me is not None:
-            overwrites[guild.me] = discord.PermissionOverwrite(
-                view_channel=True,
-                send_messages=True,
-                read_message_history=True,
-                embed_links=True,
-                manage_messages=True,
-            )
+            overwrites[guild.me] = self._bot_overwrite(guild)
         return overwrites
 
     async def _ensure_mentor_area(
@@ -407,16 +430,7 @@ class Builder(discord.Client):
 
         me = guild.me
         if me is not None and not channel.permissions_for(me).view_channel:
-            needed[me] = discord.PermissionOverwrite(
-                view_channel=True,
-                send_messages=True,
-                send_messages_in_threads=True,
-                read_message_history=True,
-                embed_links=True,
-                attach_files=True,
-                add_reactions=True,
-                manage_threads=True,
-            )
+            needed[me] = self._bot_overwrite(guild)
 
         if engineer_role is not None and not channel.permissions_for(
             engineer_role
@@ -459,6 +473,14 @@ class Builder(discord.Client):
                 await category.set_permissions(
                     target, overwrite=overwrite, reason="ハッカソン Bot のセットアップ"
                 )
+        except discord.Forbidden as exc:
+            # 50001 = そのカテゴリが Bot から見えていない。
+            # Discord では見えないチャンネルの権限は変更できないので、
+            # Bot が自分自身にアクセス権を与えることはできない
+            self.plan.failed.append(
+                f"{category.name} の権限設定: Bot からこのカテゴリが見えていません "
+                f"(code {exc.code})"
+            )
         except discord.HTTPException as exc:
             self.plan.failed.append(f"{category.name} の権限設定: {exc}")
 
@@ -487,6 +509,25 @@ class Builder(discord.Client):
                 view_channel=True, send_messages=True, read_message_history=True
             )
         return overwrites
+
+    def _explain_failures(self) -> None:
+        """403 が出たときに、何をすれば直るかを示す。"""
+        if not self.plan.failed:
+            return
+        if not any("見えていません" in f or "403" in f or "50013" in f
+                   for f in self.plan.failed):
+            return
+        print(f"\n{'=' * 60}")
+        print("権限エラーの直し方\n")
+        print("各班のカテゴリは、参加者以外に見えない設定になっています。")
+        print("Discord では **見えないチャンネルの権限は変更できない** ため、")
+        print("Bot が自分自身にアクセス権を与えることができません。\n")
+        print("解決策: Bot のロールに **管理者(Administrator)** を一時的に付ける。")
+        print("  サーバー設定 → ロール → Bot のロール → 管理者 を ON\n")
+        print("管理者権限はすべてのチャンネルの制限を上書きするため、")
+        print("この 1 回の実行で全部そろいます。")
+        print("**構築が終わったら管理者権限は外してください。**")
+        print("通常運用では、招待時の権限だけで足ります。")
 
     # --- 出力 ---------------------------------------------------------------
 
