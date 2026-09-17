@@ -129,9 +129,13 @@ class Builder(discord.Client):
         mode = "実行" if self.args.apply else "確認のみ(dry-run)"
         print(f"\nサーバー: {guild.name}")
         print(f"モード  : {mode}")
-        print(f"チーム  : {len(categories)} 件 — "
-              f"{', '.join(c.name if c else '?' for c in categories[:5])}"
-              f"{' ...' if len(categories) > 5 else ''}")
+        # 22 件を一括で触るので、対象は省略せず全部出す。
+        # 「...」で省くと、混ざってはいけないカテゴリに気づけない
+        print(f"チーム  : {len(categories)} 件")
+        for entry in categories:
+            name = entry if isinstance(entry, str) else entry.name
+            mark = "(新規作成)" if isinstance(entry, str) else ""
+            print(f"          - {name} {mark}")
         print(f"相談室名: {self.config.forum_channel_name}")
         print(f"タグ名  : {self.config.needs_attention_tag_name}\n")
 
