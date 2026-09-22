@@ -85,18 +85,26 @@ async def collect(
     attachments: list[discord.Attachment],
     *,
     include_images: bool,
+    images_supported: bool = True,
 ) -> AttachmentResult:
-    """添付ファイルを Claude に渡せる形にする。
+    """添付ファイルを API に渡せる形にする。
 
-    include_images=False のときは画像を読み込まない。
-    古いメッセージの画像まで毎回送るとコストが跳ね上がるため、
-    直近のメッセージだけ True にして呼ぶ。
+    include_images=False … 古いメッセージの画像を再送しない(コスト対策)。
+    images_supported=False … モデルが画像に対応していない。
+        この場合は「読めなかった」として参加者に伝える。
+        黙って無視すると、参加者はスクショを送ったのに
+        無関係な回答が返ってきたように見える。
     """
     result = AttachmentResult()
     image_count = 0
 
     for attachment in attachments:
         if _is_image(attachment):
+            if not images_supported:
+                result.notes.append(
+                    f"{attachment.filename}(画像の読み取りには対応していません)"
+                )
+                continue
             if not include_images:
                 # 失敗ではない。過去の画像を毎回送らないための省略
                 result.omitted.append(attachment.filename)

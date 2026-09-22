@@ -14,14 +14,25 @@ from src.config import Config
 from src.llm.client import ClaudeClient
 
 
+# テストは .env の内容に左右されてはいけない。
+# 実際、ENABLE_PROMPT_CACHE=false を .env に置いた状態でテストが壊れた。
+TEST_DEFAULTS = {
+    "anthropic_base_url": None,
+    "enable_prompt_cache": True,
+    "enable_image_input": True,
+    "anthropic_model": "claude-opus-5",
+    "anthropic_summary_model": "claude-haiku-4-5",
+    "anthropic_fallback_model": "claude-opus-4-8",
+    "anthropic_effort": "low",
+}
+
+
 def _config(**overrides) -> Config:
     import os
 
-    os.environ.update(
-        {"DISCORD_TOKEN": "x", "ANTHROPIC_API_KEY": "sk-test"}
-    )
+    os.environ.update({"DISCORD_TOKEN": "x", "ANTHROPIC_API_KEY": "sk-test"})
     config = Config.load()
-    for key, value in overrides.items():
+    for key, value in {**TEST_DEFAULTS, **overrides}.items():
         object.__setattr__(config, key, value)
     return config
 

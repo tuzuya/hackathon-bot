@@ -138,6 +138,7 @@ class MentionCog(commands.Cog):
                     thread,
                     self.bot.user.id,  # type: ignore[union-attr]
                     limit=self.config.history_limit,
+                    images_supported=self.config.enable_image_input,
                 )
                 if not history:
                     logger.warning("履歴が空でした: thread=%s", thread.id)

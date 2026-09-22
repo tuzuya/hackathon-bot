@@ -87,7 +87,10 @@ class EscalationService:
         history = []
         if bot_user is not None:
             history = await build_messages(
-                thread, bot_user.id, limit=self.config.history_limit
+                thread,
+                bot_user.id,
+                limit=self.config.history_limit,
+                images_supported=self.config.enable_image_input,
             )
         summary, failed = await summarize(self.llm, history)
         if failed:

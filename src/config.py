@@ -114,6 +114,10 @@ class Config:
     # DeepSeek の Anthropic 互換エンドポイントは cache_control 未対応なので
     # 切り替え時に false にする(サーバー側の自動キャッシュは効く)
     enable_prompt_cache: bool
+    # 画像入力を使うか。画像非対応のモデル(deepseek-v4-pro など)では false。
+    # false のとき、添付された画像は API に送らず、
+    # 「読めなかった」と参加者に伝える
+    enable_image_input: bool
     anthropic_model: str
     anthropic_summary_model: str
     anthropic_fallback_model: str | None
@@ -153,6 +157,7 @@ class Config:
             anthropic_api_key=_get("ANTHROPIC_API_KEY"),
             anthropic_base_url=_get("ANTHROPIC_BASE_URL"),
             enable_prompt_cache=_bool("ENABLE_PROMPT_CACHE", default=True),
+            enable_image_input=_bool("ENABLE_IMAGE_INPUT", default=True),
             anthropic_model=_get("ANTHROPIC_MODEL") or "claude-opus-5",
             anthropic_summary_model=_get("ANTHROPIC_SUMMARY_MODEL") or "claude-haiku-4-5",
             anthropic_fallback_model=_get("ANTHROPIC_FALLBACK_MODEL"),

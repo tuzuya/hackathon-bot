@@ -109,3 +109,35 @@ class KnowledgeCommentTest(unittest.TestCase):
         knowledge = load_knowledge(PROJECT_ROOT / "knowledge")
         for fake in ("課題設定 | 30点", "記入例"):
             self.assertNotIn(fake, knowledge, f"架空の例が混入しています: {fake}")
+
+
+class NoScreenshotGuidanceTest(unittest.TestCase):
+    """画像非対応のモデルへ切り替えたので、スクショを促してはいけない。
+
+    読めない方法を案内すると、参加者は送っても無反応に見え、
+    「Bot が壊れている」と受け取る。
+    """
+
+    def test_スクショを促していない(self) -> None:
+        knowledge = load_knowledge(PROJECT_ROOT / "knowledge")
+        prompt = build_system_prompt(
+            PROJECT_ROOT / "prompts" / "system_prompt.md", knowledge, "エンジニア相談室"
+        )
+        self.assertIn("画像は読めません", prompt)
+        self.assertNotIn("スクショで送って", prompt)
+        self.assertNotIn("スクショは歓迎", prompt)
+
+    def test_代わりの導線が示されている(self) -> None:
+        knowledge = load_knowledge(PROJECT_ROOT / "knowledge")
+        prompt = build_system_prompt(
+            PROJECT_ROOT / "prompts" / "system_prompt.md", knowledge, "エンジニア相談室"
+        )
+        # OS が分からない人に、テキストで返せる手段を渡しているか
+        self.assertIn("uname -a", prompt)
+
+    def test_初回案内もスクショを促していない(self) -> None:
+        from src import messages
+
+        body = messages.guide_body("@bot")
+        self.assertNotIn("スクショ", body)
+        self.assertIn("コピーして", body)

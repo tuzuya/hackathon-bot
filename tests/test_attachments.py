@@ -136,3 +136,34 @@ class UnsupportedTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ImagesUnsupportedTest(unittest.IsolatedAsyncioTestCase):
+    """画像非対応のモデル(deepseek-v4-pro など)へ切り替えたとき。
+
+    黙って無視してはいけない。参加者はスクショを送ったのに、
+    それに触れない回答が返ってきたように見える。
+    """
+
+    async def test_画像は送らない(self) -> None:
+        result = await collect([_png()], include_images=True, images_supported=False)
+        self.assertEqual(result.blocks, [])
+
+    async def test_読めなかったことを伝える(self) -> None:
+        result = await collect([_png()], include_images=True, images_supported=False)
+        self.assertEqual(len(result.notes), 1)
+        self.assertIn("error.png", result.notes[0])
+        self.assertIn("対応していません", result.notes[0])
+
+    async def test_テキストファイルは引き続き読める(self) -> None:
+        data = b"API_KEY=xxx"
+        result = await collect(
+            [_attachment(".env", None, len(data), data)],
+            include_images=True,
+            images_supported=False,
+        )
+        self.assertEqual(len(result.blocks), 1)
+
+    async def test_既定では画像を読む(self) -> None:
+        result = await collect([_png()], include_images=True)
+        self.assertEqual(len(result.blocks), 1)

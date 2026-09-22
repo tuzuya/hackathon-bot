@@ -48,6 +48,7 @@ async def _build_content(
     bot_user_id: int,
     *,
     include_images: bool,
+    images_supported: bool,
 ) -> str | list[dict]:
     """1 メッセージ分の content を組み立てる。
 
@@ -59,7 +60,9 @@ async def _build_content(
         return text
 
     result = await attachments_module.collect(
-        message.attachments, include_images=include_images
+        message.attachments,
+        include_images=include_images,
+        images_supported=images_supported,
     )
     if not result.has_content and not result.notes and not result.omitted:
         return text
@@ -90,6 +93,7 @@ async def build_messages(
     bot_user_id: int,
     *,
     limit: int,
+    images_supported: bool = True,
 ) -> list[MessageParam]:
     """投稿内の会話履歴を messages[] に組み立てる。
 
@@ -131,7 +135,10 @@ async def build_messages(
             continue
 
         content = await _build_content(
-            message, bot_user_id, include_images=message.id in image_ids
+            message,
+            bot_user_id,
+            include_images=message.id in image_ids,
+            images_supported=images_supported,
         )
         if not content:
             continue
