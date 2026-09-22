@@ -14,11 +14,16 @@ import aiosqlite
 
 logger = logging.getLogger(__name__)
 
-# 1M トークンあたりの USD。表示・アラート用の概算で、厳密な請求額ではない。
+# 1M トークンあたりの USD(入力, 出力)。表示・アラート用の概算で、厳密な請求額ではない。
+#
+# DeepSeek は時間帯で価格が変わる(ピークはオフピークの2倍)。
+# アラートを早めに出したいので **ピーク価格**(高い方)で見積もる。
 PRICES: dict[str, tuple[float, float]] = {
     "claude-opus-5": (5.0, 25.0),
     "claude-sonnet-5": (2.0, 10.0),
     "claude-haiku-4-5": (1.0, 5.0),
+    "deepseek-flash": (0.30, 1.20),
+    "deepseek-v4-pro": (1.32, 3.96),
 }
 
 

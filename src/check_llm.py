@@ -75,21 +75,30 @@ async def main() -> None:
         config.system_prompt_path, knowledge, config.forum_channel_name
     )
     print(f"\nシステムプロンプト: {len(system_prompt):,} 文字 / モデル: {config.anthropic_model}")
+    print(f"接続先: {config.anthropic_base_url or 'https://api.anthropic.com(既定)'}")
+    print(f"キャッシュ指定: {'あり' if config.enable_prompt_cache else 'なし'}")
     print(f"拒否時フォールバック: {config.anthropic_fallback_model or '(無効)'}\n")
 
-    client = anthropic.AsyncAnthropic(api_key=config.anthropic_api_key)
+    client = anthropic.AsyncAnthropic(
+        api_key=config.anthropic_api_key,
+        **({"base_url": config.anthropic_base_url} if config.anthropic_base_url else {}),
+    )
 
     async def call(question: str) -> object:
         kwargs = {
             "model": config.anthropic_model,
             "max_tokens": 64,  # 出力は最小限にして、入力側の挙動だけを見る
-            "system": [
-                {
-                    "type": "text",
-                    "text": system_prompt,
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ],
+            "system": (
+                [
+                    {
+                        "type": "text",
+                        "text": system_prompt,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ]
+                if config.enable_prompt_cache
+                else system_prompt
+            ),
             "messages": [{"role": "user", "content": question}],
             "output_config": {"effort": config.anthropic_effort},
         }

@@ -97,3 +97,67 @@ class FallbackScopeTest(unittest.IsolatedAsyncioTestCase):
         client._client.beta.messages.create = AsyncMock()
         await client.answer("system", [{"role": "user", "content": "q"}])
         client._client.beta.messages.create.assert_not_awaited()
+
+
+class BaseUrlAndCacheTest(unittest.IsolatedAsyncioTestCase):
+    """Anthropic 形式の別サービス(DeepSeek など)へ切り替えられること。
+
+    DeepSeek の互換エンドポイントは cache_control と fallbacks に未対応。
+    そのまま送ると 400 になるので、設定で切れなければならない。
+    """
+
+    def _client(self, **overrides) -> ClaudeClient:
+        config = _config(**overrides)
+        with patch("anthropic.AsyncAnthropic"):
+            client = ClaudeClient(config)
+        client._client = MagicMock()
+        client._client.messages.create = AsyncMock(return_value=_fake_response())
+        client._client.beta.messages.create = AsyncMock(return_value=_fake_response())
+        return client
+
+    async def test_キャッシュ無効なら文字列で送る(self) -> None:
+        client = self._client(
+            enable_prompt_cache=False, anthropic_fallback_model=None
+        )
+        await client.answer("system", [{"role": "user", "content": "q"}])
+        kwargs = client._client.messages.create.await_args.kwargs
+        self.assertIsInstance(kwargs["system"], str)
+
+    async def test_キャッシュ有効ならブロックで送る(self) -> None:
+        client = self._client(
+            enable_prompt_cache=True, anthropic_fallback_model=None
+        )
+        await client.answer("system", [{"role": "user", "content": "q"}])
+        kwargs = client._client.messages.create.await_args.kwargs
+        self.assertIsInstance(kwargs["system"], list)
+        self.assertIn("cache_control", kwargs["system"][0])
+
+    async def test_base_url_を指定してクライアントを作れる(self) -> None:
+        config = _config(anthropic_base_url="https://api.deepseek.com/anthropic")
+        with patch("anthropic.AsyncAnthropic") as ctor:
+            ClaudeClient(config)
+        self.assertEqual(
+            ctor.call_args.kwargs["base_url"], "https://api.deepseek.com/anthropic"
+        )
+
+    async def test_base_url_未指定なら渡さない(self) -> None:
+        config = _config(anthropic_base_url=None)
+        with patch("anthropic.AsyncAnthropic") as ctor:
+            ClaudeClient(config)
+        self.assertNotIn("base_url", ctor.call_args.kwargs)
+
+    async def test_DeepSeek想定の設定では互換性の無い指定を送らない(self) -> None:
+        # 実際の移行設定。cache_control も fallbacks も乗ってはいけない
+        client = self._client(
+            anthropic_base_url="https://api.deepseek.com/anthropic",
+            enable_prompt_cache=False,
+            anthropic_fallback_model=None,
+            anthropic_model="deepseek-flash",
+        )
+        await client.answer("system", [{"role": "user", "content": "q"}])
+        client._client.beta.messages.create.assert_not_awaited()
+        kwargs = client._client.messages.create.await_args.kwargs
+        self.assertIsInstance(kwargs["system"], str)
+        self.assertNotIn("fallbacks", kwargs)
+        self.assertNotIn("betas", kwargs)
+        self.assertEqual(kwargs["model"], "deepseek-flash")

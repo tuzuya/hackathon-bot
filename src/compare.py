@@ -31,6 +31,9 @@ PRICES: dict[str, tuple[float, float]] = {
     "claude-haiku-4-5": (1.0, 5.0),
 }
 
+# 実行中の設定(_system_param から参照する)
+_CONFIG = None
+
 # 比較する設定。同じモデルを連続させて、キャッシュの書き込み回数を抑える。
 CONFIGURATIONS: list[tuple[str, str]] = [
     ("claude-opus-5", "medium"),
@@ -188,6 +191,17 @@ class Result:
         return marks
 
 
+def _system_param(system_prompt: str):
+    """接続先がキャッシュ指定に対応していなければ、ただの文字列で送る。"""
+    from src.config import Config as _C
+
+    if not _CONFIG.enable_prompt_cache:
+        return system_prompt
+    return [
+        {"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}
+    ]
+
+
 async def run_one(
     client: anthropic.AsyncAnthropic,
     system_prompt: str,
@@ -324,6 +338,8 @@ async def main() -> None:
         print("ANTHROPIC_API_KEY が設定されていません。", file=sys.stderr)
         raise SystemExit(1)
 
+    global _CONFIG
+    _CONFIG = config
     knowledge = load_knowledge(config.knowledge_dir)
     system_prompt = build_system_prompt(
         config.system_prompt_path, knowledge, config.forum_channel_name
@@ -336,7 +352,11 @@ async def main() -> None:
         f"= {total_calls} 回の API 呼び出し\n"
     )
 
-    client = anthropic.AsyncAnthropic(api_key=config.anthropic_api_key, timeout=180.0)
+    client = anthropic.AsyncAnthropic(
+        api_key=config.anthropic_api_key,
+        timeout=180.0,
+        **({"base_url": config.anthropic_base_url} if config.anthropic_base_url else {}),
+    )
     results: list[Result] = []
     actual_cost = 0.0
 

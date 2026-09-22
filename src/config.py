@@ -52,6 +52,13 @@ def _int_with_default(name: str, default: int) -> int:
     return default if value is None else value
 
 
+def _bool(name: str, *, default: bool) -> bool:
+    value = _get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _float_list(name: str, default: list[float]) -> list[float]:
     """カンマ区切りの金額。使用量アラートの閾値に使う。"""
     raw = _get(name)
@@ -100,6 +107,13 @@ class Config:
 
     # --- 段階2以降(未設定でも起動はできる) ---
     anthropic_api_key: str | None
+    # Anthropic 形式の API を提供する別サービスへ向けられる。
+    # DeepSeek: https://api.deepseek.com/anthropic
+    anthropic_base_url: str | None
+    # プロンプトキャッシュのブレークポイントを送るか。
+    # DeepSeek の Anthropic 互換エンドポイントは cache_control 未対応なので
+    # 切り替え時に false にする(サーバー側の自動キャッシュは効く)
+    enable_prompt_cache: bool
     anthropic_model: str
     anthropic_summary_model: str
     anthropic_fallback_model: str | None
@@ -137,6 +151,8 @@ class Config:
             forum_channel_ids=frozenset(_optional_int_list("FORUM_CHANNEL_IDS")),
             forum_channel_name=_get("FORUM_CHANNEL_NAME") or "エンジニア相談室",
             anthropic_api_key=_get("ANTHROPIC_API_KEY"),
+            anthropic_base_url=_get("ANTHROPIC_BASE_URL"),
+            enable_prompt_cache=_bool("ENABLE_PROMPT_CACHE", default=True),
             anthropic_model=_get("ANTHROPIC_MODEL") or "claude-opus-5",
             anthropic_summary_model=_get("ANTHROPIC_SUMMARY_MODEL") or "claude-haiku-4-5",
             anthropic_fallback_model=_get("ANTHROPIC_FALLBACK_MODEL"),

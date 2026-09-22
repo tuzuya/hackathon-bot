@@ -32,11 +32,17 @@ class ClaudeClient:
         # SDK の既定はタイムアウト 10 分・リトライ 2 回。
         # Discord では参加者が画面の前で待っているので、どちらも短くする。
         # 失敗するなら早く失敗して、日本語のメッセージを返した方がよい。
-        self._client = anthropic.AsyncAnthropic(
-            api_key=config.anthropic_api_key,
-            timeout=config.llm_timeout_seconds,
-            max_retries=config.llm_max_retries,
-        )
+        # base_url を指定すると、Anthropic 形式の API を話す別サービスへ向けられる。
+        # DeepSeek の互換エンドポイント(https://api.deepseek.com/anthropic)など。
+        client_kwargs: dict[str, Any] = {
+            "api_key": config.anthropic_api_key,
+            "timeout": config.llm_timeout_seconds,
+            "max_retries": config.llm_max_retries,
+        }
+        if config.anthropic_base_url:
+            client_kwargs["base_url"] = config.anthropic_base_url
+            logger.info("LLM の接続先: %s", config.anthropic_base_url)
+        self._client = anthropic.AsyncAnthropic(**client_kwargs)
 
     async def close(self) -> None:
         await self._client.close()
@@ -105,8 +111,11 @@ class ClaudeClient:
         return_usage: bool = False,
         allow_fallback: bool = False,
     ) -> Any:
+        # ⚠️ cache_control は Anthropic 固有。互換エンドポイントでは未対応のことがある。
+        #    ENABLE_PROMPT_CACHE=false にすると、ただの文字列として送る。
+        #    その場合もサーバー側の自動プレフィックスキャッシュは効きうる。
         system: Any = system_prompt
-        if cache_system:
+        if cache_system and self._config.enable_prompt_cache:
             # 知識源を含む固定部分の直後にキャッシュのブレークポイントを置く。
             # 可変部分(会話履歴)は messages[] にあり、system より後に並ぶので影響しない。
             system = [
