@@ -111,33 +111,35 @@ class KnowledgeCommentTest(unittest.TestCase):
             self.assertNotIn(fake, knowledge, f"架空の例が混入しています: {fake}")
 
 
-class NoScreenshotGuidanceTest(unittest.TestCase):
-    """画像非対応のモデルへ切り替えたので、スクショを促してはいけない。
+class ScreenshotGuidanceTest(unittest.TestCase):
+    """画像対応モデル(deepseek-flash / Claude)を使う前提の検証。
 
-    読めない方法を案内すると、参加者は送っても無反応に見え、
-    「Bot が壊れている」と受け取る。
+    SPEC §6.4 は「分からなかったらスクショを送って」の一文を最重要としている。
+    初心者は自力で OS を判別できないため、ここが逃げ道になる。
+
+    ⚠️ 画像非対応のモデルへ切り替えるときは、ENABLE_IMAGE_INPUT=false に加えて
+       この文面も外すこと。読めない方法を案内すると、参加者は送っても
+       無反応に見え、「Bot が壊れている」と受け取る。
     """
 
-    def test_スクショを促していない(self) -> None:
+    def _prompt(self) -> str:
         knowledge = load_knowledge(PROJECT_ROOT / "knowledge")
-        prompt = build_system_prompt(
+        return build_system_prompt(
             PROJECT_ROOT / "prompts" / "system_prompt.md", knowledge, "エンジニア相談室"
         )
-        self.assertIn("画像は読めません", prompt)
-        self.assertNotIn("スクショで送って", prompt)
-        self.assertNotIn("スクショは歓迎", prompt)
 
-    def test_代わりの導線が示されている(self) -> None:
-        knowledge = load_knowledge(PROJECT_ROOT / "knowledge")
-        prompt = build_system_prompt(
-            PROJECT_ROOT / "prompts" / "system_prompt.md", knowledge, "エンジニア相談室"
-        )
-        # OS が分からない人に、テキストで返せる手段を渡しているか
-        self.assertIn("uname -a", prompt)
+    def test_OS不明のときスクショを促している(self) -> None:
+        self.assertIn("スクショで送って", self._prompt())
 
-    def test_初回案内もスクショを促していない(self) -> None:
+    def test_画像を読めることが明示されている(self) -> None:
+        prompt = self._prompt()
+        self.assertIn("画像(スクリーンショット)を読むことができます", prompt)
+        self.assertNotIn("画像は読めません", prompt)
+
+    def test_画像から環境が分かるなら聞き返さないと指示している(self) -> None:
+        self.assertIn("環境を聞き返さない", self._prompt())
+
+    def test_初回案内でもスクショを歓迎している(self) -> None:
         from src import messages
 
-        body = messages.guide_body("@bot")
-        self.assertNotIn("スクショ", body)
-        self.assertIn("コピーして", body)
+        self.assertIn("スクショ歓迎", messages.guide_body("@bot"))
