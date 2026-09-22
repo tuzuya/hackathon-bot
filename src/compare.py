@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import sys
 import time
@@ -34,13 +35,39 @@ PRICES: dict[str, tuple[float, float]] = {
 # 実行中の設定(_system_param から参照する)
 _CONFIG = None
 
-# 比較する設定。同じモデルを連続させて、キャッシュの書き込み回数を抑える。
-CONFIGURATIONS: list[tuple[str, str]] = [
+# 既定の比較対象(Anthropic 本家に接続している場合)。
+# 同じモデルを連続させて、キャッシュの書き込み回数を抑える。
+DEFAULT_CONFIGURATIONS: list[tuple[str, str]] = [
     ("claude-opus-5", "medium"),
     ("claude-opus-5", "low"),
     ("claude-sonnet-5", "medium"),
     ("claude-sonnet-5", "low"),
 ]
+
+
+def resolve_configurations(config: Config) -> list[tuple[str, str]]:
+    """比較する (モデル, effort) の組を決める。
+
+    COMPARE_MODELS で明示できる。例:
+        COMPARE_MODELS=deepseek-flash:low,deepseek-flash:medium
+
+    指定がなく、接続先が Anthropic 本家でない場合は、
+    設定中のモデル1つだけを検証する。
+    別サービスに Claude のモデル名を投げても意味がないため。
+    """
+    raw = os.environ.get("COMPARE_MODELS", "").strip()
+    if raw:
+        pairs: list[tuple[str, str]] = []
+        for part in raw.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            model, _, effort = part.partition(":")
+            pairs.append((model.strip(), effort.strip() or config.anthropic_effort))
+        return pairs
+    if config.anthropic_base_url:
+        return [(config.anthropic_model, config.anthropic_effort)]
+    return DEFAULT_CONFIGURATIONS
 
 
 @dataclass(frozen=True)
@@ -344,11 +371,12 @@ async def main() -> None:
     system_prompt = build_system_prompt(
         config.system_prompt_path, knowledge, config.forum_channel_name
     )
+    configurations = resolve_configurations(config)
     turns_total = sum(len(q.turns) for q in QUESTIONS)
-    total_calls = len(CONFIGURATIONS) * turns_total
+    total_calls = len(configurations) * turns_total
     print(f"\nシステムプロンプト: {len(system_prompt):,} 文字")
     print(
-        f"{len(CONFIGURATIONS)} 設定 × {len(QUESTIONS)} 問({turns_total} ターン) "
+        f"{len(configurations)} 設定 × {len(QUESTIONS)} 問({turns_total} ターン) "
         f"= {total_calls} 回の API 呼び出し\n"
     )
 
@@ -361,7 +389,7 @@ async def main() -> None:
     actual_cost = 0.0
 
     try:
-        for model, effort in CONFIGURATIONS:
+        for model, effort in configurations:
             print(f"── {model} / effort={effort} ──")
             for question in QUESTIONS:
                 result = await run_one(client, system_prompt, model, effort, question)
