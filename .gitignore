@@ -21,3 +21,10 @@ data/
 .DS_Store
 compare_results.md
 teams.txt
+
+# 運営が用意する知識源(会場・日程・審査・規約)はイベント固有の非公開情報なのでコミットしない。
+# Bot は手元・デプロイ先に置いたファイルをそのまま読む(knowledge/README.md)
+knowledge/10_evaluation.md
+knowledge/20_schedule.md
+knowledge/30_regulation.md
+knowledge/40_operations.md
